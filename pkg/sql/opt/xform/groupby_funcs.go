@@ -28,10 +28,10 @@ func (c *CustomFuncs) IsCanonicalGroupBy(private *memo.GroupingPrivate) bool {
 }
 
 // MakeMinMaxScalarSubqueries transforms a list of MIN and MAX aggregate
-// expressions (aggs) and a ScanExpr (input) into multiple scalar subqueries,
-// with one MIN or MAX expression per subquery.
+// expressions (aggs) and a scanPrivate with filters into multiple scalar
+// subqueries, with one MIN or MAX expression per subquery.
 func (c *CustomFuncs) MakeMinMaxScalarSubqueries(
-	grp memo.RelExpr, scanPrivate *memo.ScanPrivate, aggs memo.AggregationsExpr,
+	grp memo.RelExpr, scanPrivate *memo.ScanPrivate, filters *memo.FiltersExpr, aggs memo.AggregationsExpr,
 ) {
 	numCols := len(aggs)
 	valuesEntries := make(memo.ScalarListExpr, numCols)
@@ -41,6 +41,25 @@ func (c *CustomFuncs) MakeMinMaxScalarSubqueries(
 	for i := 0; i < numCols; i++ {
 		newScanPrivate := c.DuplicateScanPrivate(scanPrivate)
 		newScanExpr := c.e.f.ConstructScan(newScanPrivate)
+
+		var inputExpr memo.RelExpr
+		inputExpr = newScanExpr
+		// If the input to the scalar group by is a Select with filters, remap the
+		// column IDs in the filters and use that to build a new Select.
+		if grp.Child(0).Op() == opt.SelectOp {
+			tempSelect := &memo.SelectExpr{Input: inputExpr, Filters: *filters }
+			// Any Filter in filters which contains a remappable VariableExpr will be
+			// deep copied. Other locations which reference filters will be
+			// unaffected.
+			mappedSelect := c.mapExprCols(tempSelect, scanPrivate.Cols, newScanPrivate.Cols).(memo.RelExpr)
+
+			// If mapScalarExprCols failed to call ConstructSelect, do so now.
+			if mappedSelect == tempSelect {
+				inputExpr = c.e.f.ConstructSelect(newScanExpr, *filters)
+			} else {
+				inputExpr = mappedSelect
+			}
+		}
 
 		var newAggrItem = aggs[i]
 		// Variable expressions must have their ColIDs remapped, which requires
@@ -69,7 +88,7 @@ func (c *CustomFuncs) MakeMinMaxScalarSubqueries(
 		valuesEntries[i] =
 			c.e.f.ConstructSubquery(
 				c.e.f.ConstructScalarGroupBy(
-					newScanExpr,
+					inputExpr,
 					memo.AggregationsExpr{
 						newAggrItem,
 					},
@@ -119,6 +138,36 @@ func (c *CustomFuncs) TwoOrMoreMinOrMax(aggs memo.AggregationsExpr) bool {
 		}
 	}
 	return true
+}
+
+// SimpleScanOrSelect tests if an 'input' expression is a canonical scan or a
+// select with a canonical scan, and if so, returns the associated ScanPrivate
+// and FiltersExpr.
+func (c *CustomFuncs) SimpleScanOrSelect(input opt.Expr) (*memo.ScanPrivate, *memo.FiltersExpr, bool) {
+
+	switch relation := input.(type) {
+	case *memo.SelectExpr:
+		//var relation memo.RelExpr
+		//if relation, ok := input.Child(0).(memo.RelExpr); !ok {
+		//	return nil, nil, false
+		//}
+		switch scan := input.Child(0).(type) {
+		case *memo.ScanExpr:
+			if !c.e.funcs.IsCanonicalScan(scan.Private().(*memo.ScanPrivate)) {
+				return nil, nil, false
+			}
+			return scan.Private().(*memo.ScanPrivate), input.Child(1).(*memo.FiltersExpr), true
+		default:
+			return nil, nil, false
+		}
+
+	case *memo.ScanExpr:
+		if (!c.e.funcs.IsCanonicalScan(relation.Private().(*memo.ScanPrivate))) {
+			return nil, nil, false
+		}
+		return relation.Private().(*memo.ScanPrivate), nil, true
+	}
+	return nil, nil, false
 }
 
 // MakeProjectFromPassthroughAggs constructs a top-level Project operator that

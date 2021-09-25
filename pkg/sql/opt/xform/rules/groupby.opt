@@ -10,12 +10,13 @@
 #       such as joins, can take advantage of this rewrite.
 [ReplaceScalarMinMaxWithScalarSubqueries, Explore]
 (ScalarGroupBy
-    (Scan $scanPrivate:* & (IsCanonicalScan $scanPrivate))
+    $input:* &
+        (Let ($scanPrivate $filters $ok):(SimpleScanOrSelect $input) $ok)
     $aggregations:* & (TwoOrMoreMinOrMax $aggregations)
     $groupingPrivate:* & (IsCanonicalGroupBy $groupingPrivate)
 )
 =>
-(MakeMinMaxScalarSubqueries $scanPrivate $aggregations)
+(MakeMinMaxScalarSubqueries $scanPrivate $filters $aggregations)
 
 # ReplaceScalarMinMaxWithLimit replaces a min or max group by aggregation with a
 # limit 1 on an ordered set. This rule may result in a lower cost plan if the

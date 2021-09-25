@@ -86,7 +86,15 @@ func (c *CustomFuncs) MapFilterCols(
 	return *newFilters
 }
 
+// mapScalarExprCols remaps column IDs in the VariableExprs inside a 'scalar'
+// expression from a 'src' column set to a 'dst' column set.
 func (c *CustomFuncs) mapScalarExprCols(scalar opt.ScalarExpr, src, dst opt.ColSet) opt.ScalarExpr {
+	return c.mapExprCols(scalar, src, dst).(opt.ScalarExpr)
+}
+
+// mapExprCols remaps column IDs in the VariableExprs inside a 'scalar'
+// expression from a 'src' column set to a 'dst' column set.
+func (c *CustomFuncs) mapExprCols(expr opt.Expr, src, dst opt.ColSet) opt.Expr {
 	if src.Len() != dst.Len() {
 		panic(errors.AssertionFailedf(
 			"src and dst must have the same number of columns, src: %v, dst: %v",
@@ -104,7 +112,7 @@ func (c *CustomFuncs) mapScalarExprCols(scalar opt.ScalarExpr, src, dst opt.ColS
 		dstCol, _ = dst.Next(dstCol + 1)
 	}
 
-	return c.RemapCols(scalar, colMap)
+	return c.RemapColsInAnyExpr(expr, colMap)
 }
 
 // checkConstraintFilters generates all filters that we can derive from the

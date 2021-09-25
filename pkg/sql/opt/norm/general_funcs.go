@@ -293,6 +293,20 @@ func (c *CustomFuncs) DuplicateColumnIDs(
 // encountered in the input ScalarExpr that are not keys in colMap, they are not
 // remapped.
 func (c *CustomFuncs) RemapCols(scalar opt.ScalarExpr, colMap opt.ColMap) opt.ScalarExpr {
+	mappedExpr := c.RemapColsInAnyExpr(scalar, colMap)
+	return mappedExpr.(opt.ScalarExpr)
+}
+
+// RemapColsInAnyExpr remaps columns IDs in the input Expr by replacing occurrences
+// of the keys of colMap with the corresponding values. If column IDs are
+// encountered in the input Expr that are not keys in colMap, they are not
+// remapped.
+// Note: This differs from RemapCols only in that it maps and returns any
+//       expression, not just scalars.
+func (c *CustomFuncs) RemapColsInAnyExpr(expr opt.Expr, colMap opt.ColMap) opt.Expr {
+	if expr == nil {
+		return nil
+	}
 	// Recursively walk the scalar sub-tree looking for references to columns
 	// that need to be replaced and then replace them appropriately.
 	var replace ReplaceFunc
@@ -309,7 +323,7 @@ func (c *CustomFuncs) RemapCols(scalar opt.ScalarExpr, colMap opt.ColMap) opt.Sc
 		return c.f.Replace(e, replace)
 	}
 
-	return replace(scalar).(opt.ScalarExpr)
+	return replace(expr)
 }
 
 // ----------------------------------------------------------------------
