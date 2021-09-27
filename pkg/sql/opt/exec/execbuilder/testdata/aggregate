@@ -804,8 +804,8 @@ vectorized: true
       table: xyz@primary
       spans: FULL SCAN
 
-# A constrained scan should be preferred over separate subqueries.
-# Also, only canonical scans are supported.
+# We don't yet support the optimization to convert multiple aggregates to
+# subqueries with limit 1 when there is a filter.
 query T
 EXPLAIN SELECT min(y), max(y) FROM xyz WHERE x in (0, 4, 7)
 ----

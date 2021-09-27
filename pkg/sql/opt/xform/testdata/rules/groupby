@@ -609,9 +609,8 @@ scalar-group-by
       └── const-agg [as=max:7, outer=(1)]
            └── a:1
 
-# A filter which gets pushed and builds a constraint should allow the rule to
-# fire.
-opt expect=ReplaceScalarMinMaxWithLimit
+# Verify the rule does not fire when FILTER is used.
+opt disable=PushAggFilterIntoScalarGroupBy expect-not=ReplaceScalarMinMaxWithLimit
 SELECT max(a) FILTER (WHERE a > 'a') FROM abc
 ----
 scalar-group-by
@@ -619,49 +618,20 @@ scalar-group-by
  ├── cardinality: [1 - 1]
  ├── key: ()
  ├── fd: ()-->(8)
- ├── scan abc,rev
- │    ├── columns: a:1!null
- │    ├── constraint: /1: [/e'a\x00' - ]
- │    ├── limit: 1(rev)
- │    ├── key: ()
- │    └── fd: ()-->(1)
+ ├── project
+ │    ├── columns: column7:7!null a:1!null
+ │    ├── key: (1)
+ │    ├── fd: (1)-->(7)
+ │    ├── scan abc
+ │    │    ├── columns: a:1!null
+ │    │    └── key: (1)
+ │    └── projections
+ │         └── a:1 > 'a' [as=column7:7, outer=(1)]
  └── aggregations
-      └── const-agg [as=max:8, outer=(1)]
-           └── a:1
-
-# A filter which does not get pushed should allow the rule to fire.
-opt expect=ReplaceScalarMinMaxWithLimit
-SELECT max(a) FILTER (WHERE b > 3.1415926535) FROM abc
-----
-scalar-group-by
- ├── columns: max:8
- ├── cardinality: [1 - 1]
- ├── key: ()
- ├── fd: ()-->(8)
- ├── limit
- │    ├── columns: a:1!null b:2!null
- │    ├── internal-ordering: -1
- │    ├── cardinality: [0 - 1]
- │    ├── key: ()
- │    ├── fd: ()-->(1,2)
- │    ├── select
- │    │    ├── columns: a:1!null b:2!null
- │    │    ├── key: (1)
- │    │    ├── fd: (1)-->(2)
- │    │    ├── ordering: -1
- │    │    ├── limit hint: 1.00
- │    │    ├── scan abc,rev
- │    │    │    ├── columns: a:1!null b:2
- │    │    │    ├── key: (1)
- │    │    │    ├── fd: (1)-->(2)
- │    │    │    ├── ordering: -1
- │    │    │    └── limit hint: 3.00
- │    │    └── filters
- │    │         └── b:2 > 3.1415926535 [outer=(2), constraints=(/2: [/3.1415926535000005 - ]; tight)]
- │    └── 1
- └── aggregations
-      └── const-agg [as=max:8, outer=(1)]
-           └── a:1
+      └── agg-filter [as=max:8, outer=(1,7)]
+           ├── max
+           │    └── a:1
+           └── column7:7
 
 opt expect=ReplaceScalarMinMaxWithLimit
 SELECT max(b) FROM abc
@@ -1123,10 +1093,10 @@ values
  └── tuple
       ├── subquery
       │    └── scalar-group-by
-      │         ├── columns: min:13
+      │         ├── columns: min:6
       │         ├── cardinality: [1 - 1]
       │         ├── key: ()
-      │         ├── fd: ()-->(13)
+      │         ├── fd: ()-->(6)
       │         ├── scan xyz@yy
       │         │    ├── columns: y:9!null
       │         │    ├── constraint: /9/8: (/NULL - ]
@@ -1134,22 +1104,22 @@ values
       │         │    ├── key: ()
       │         │    └── fd: ()-->(9)
       │         └── aggregations
-      │              └── const-agg [as=min:13, outer=(9)]
+      │              └── const-agg [as=min:6, outer=(9)]
       │                   └── y:9
       └── subquery
            └── scalar-group-by
-                ├── columns: min:19
+                ├── columns: min:7
                 ├── cardinality: [1 - 1]
                 ├── key: ()
-                ├── fd: ()-->(19)
+                ├── fd: ()-->(7)
                 ├── scan xyz@xy
-                │    ├── columns: x:14!null
+                │    ├── columns: x:13!null
                 │    ├── limit: 1
                 │    ├── key: ()
-                │    └── fd: ()-->(14)
+                │    └── fd: ()-->(13)
                 └── aggregations
-                     └── const-agg [as=min:19, outer=(14)]
-                          └── x:14
+                     └── const-agg [as=min:7, outer=(13)]
+                          └── x:13
 
 # ReplaceScalarMinWithLimit can be applied on multiple aggregations
 # on different columns.
@@ -1164,10 +1134,10 @@ values
  └── tuple
       ├── subquery
       │    └── scalar-group-by
-      │         ├── columns: max:13
+      │         ├── columns: max:6
       │         ├── cardinality: [1 - 1]
       │         ├── key: ()
-      │         ├── fd: ()-->(13)
+      │         ├── fd: ()-->(6)
       │         ├── scan xyz@yy,rev
       │         │    ├── columns: y:9!null
       │         │    ├── constraint: /9/8: (/NULL - ]
@@ -1175,22 +1145,43 @@ values
       │         │    ├── key: ()
       │         │    └── fd: ()-->(9)
       │         └── aggregations
-      │              └── const-agg [as=max:13, outer=(9)]
+      │              └── const-agg [as=max:6, outer=(9)]
       │                   └── y:9
       └── subquery
            └── scalar-group-by
-                ├── columns: max:19
+                ├── columns: max:7
                 ├── cardinality: [1 - 1]
                 ├── key: ()
-                ├── fd: ()-->(19)
+                ├── fd: ()-->(7)
                 ├── scan xyz@xy,rev
-                │    ├── columns: x:14!null
+                │    ├── columns: x:13!null
                 │    ├── limit: 1(rev)
                 │    ├── key: ()
-                │    └── fd: ()-->(14)
+                │    └── fd: ()-->(13)
                 └── aggregations
-                     └── const-agg [as=max:19, outer=(14)]
-                          └── x:14
+                     └── const-agg [as=max:7, outer=(13)]
+                          └── x:13
+
+# ReplaceScalarMinMaxWithScalarSubqueries can only be applied to canonical
+# scans.
+opt expect-not=ReplaceScalarMinMaxWithScalarSubqueries
+SELECT min(y), max(x) FROM xyz WHERE z > 0
+----
+scalar-group-by
+ ├── columns: min:6 max:7
+ ├── cardinality: [1 - 1]
+ ├── key: ()
+ ├── fd: ()-->(6,7)
+ ├── scan xyz@zyx
+ │    ├── columns: x:1!null y:2 z:3!null
+ │    ├── constraint: /3/2/1: [/5e-324 - ]
+ │    ├── key: (1)
+ │    └── fd: (1)-->(2,3)
+ └── aggregations
+      ├── min [as=min:6, outer=(2)]
+      │    └── y:2
+      └── max [as=max:7, outer=(1)]
+           └── x:1
 
 # ReplaceScalarMinMaxWithScalarSubqueries cannot be applied unless all
 # expressions are min or max functions.
@@ -1214,29 +1205,8 @@ scalar-group-by
       └── sum [as=sum:8, outer=(3)]
            └── z:3
 
-# ReplaceScalarMinMaxWithScalarSubqueries can only be applied to canonical
-# scans.
-opt expect-not=ReplaceScalarMinMaxWithScalarSubqueries
-SELECT min(y), max(x) FROM xyz WHERE z > 0
-----
-scalar-group-by
- ├── columns: min:6 max:7
- ├── cardinality: [1 - 1]
- ├── key: ()
- ├── fd: ()-->(6,7)
- ├── scan xyz@zyx
- │    ├── columns: x:1!null y:2 z:3!null
- │    ├── constraint: /3/2/1: [/5e-324 - ]
- │    ├── key: (1)
- │    └── fd: (1)-->(2,3)
- └── aggregations
-      ├── min [as=min:6, outer=(2)]
-      │    └── y:2
-      └── max [as=max:7, outer=(1)]
-           └── x:1
-
 # ReplaceScalarMinMaxWithScalarSubqueries cannot be applied on MIN/MAX
-# expressions which are not a simple variable expression
+# expressions which are the result of a projection.
 opt expect-not=ReplaceScalarMinMaxWithScalarSubqueries
 SELECT min(y+1), max(x+1) FROM xyz
 ----

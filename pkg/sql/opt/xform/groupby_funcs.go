@@ -78,11 +78,10 @@ func (c *CustomFuncs) MakeMinMaxScalarSubqueries(
 		default:
 			panic(errors.AssertionFailedf("expected a MIN or MAX expression, but found %T", aggs[i].Agg))
 		}
-		columnMeta := c.e.mem.Metadata().ColumnMeta(aggs[i].Col)
 		newAggrItem =
 			c.e.f.ConstructAggregationsItem(
 				newAggrFunc,
-				c.e.mem.Metadata().AddColumn(columnMeta.Alias, columnMeta.Type),
+				aggs[i].Col,
 			)
 
 		valuesEntries[i] =
@@ -119,7 +118,6 @@ func (c *CustomFuncs) MakeMinMaxScalarSubqueries(
 // TwoOrMoreMinOrMax returns true if the aggregations (aggs) consists of two
 // or more MIN or MAX expressions on variable expressions with no other type of
 // aggregate function.
-//
 func (c *CustomFuncs) TwoOrMoreMinOrMax(aggs memo.AggregationsExpr) bool {
 	if len(aggs) < 2 {
 		return false
