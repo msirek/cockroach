@@ -107,6 +107,20 @@ func (c *CustomFuncs) mapScalarExprCols(scalar opt.ScalarExpr, src, dst opt.ColS
 	return c.RemapCols(scalar, colMap)
 }
 
+func (c *CustomFuncs) remapColSet(toMapColSet, src, dst opt.ColSet) opt.ColSet {
+	if src.Len() != dst.Len() {
+		panic(errors.AssertionFailedf(
+			"src and dst must have the same number of columns, src: %v, dst: %v",
+			src,
+			dst,
+		))
+	}
+
+	var srcColList = src.ToList()
+	var dstColList = dst.ToList()
+	return opt.TranslateColSet(toMapColSet, srcColList, dstColList)
+}
+
 // checkConstraintFilters generates all filters that we can derive from the
 // check constraints. These are constraints that have been validated and are
 // non-nullable. We only use non-nullable check constraints because they

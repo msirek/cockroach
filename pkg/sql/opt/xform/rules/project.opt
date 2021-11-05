@@ -64,3 +64,107 @@
 )
 =>
 (Project $input $projections $passthrough)
+
+# SplitProjectedDisjunctionAddKey performs a transformation similar to
+# SplitDisjunctionAddKey, but it uses information from the parent Project
+# operation to allow pruning of unnecessary filter columns.
+# There is no distinction between accessed columns and the selected columns
+# (OutputCols) in a ScanExpr, so there is no clean way to handle this pruning
+# currently without examining the ProjectExpr.
+#
+[SplitProjectedDisjunctionAddKey, Explore]
+(Project
+    (Select
+        $input:(Scan
+                $scanPrivate:* & (IsCanonicalScan $scanPrivate)
+            ) &
+            ^(HasStrictKey $input)
+        $filters:* &
+            (Let
+                (
+                    $leftFilter
+                    $rightFilter
+                    $itemToReplace
+                    $ok
+                ):(SplitDisjunction $scanPrivate $filters)
+                $ok
+            )
+    )
+    $projections:*
+    $passthrough:* &
+        (Let
+            ($projectCols):(UnionCols3
+                $passthrough
+                (ProjectionCols $projections)
+                (PrimaryKeyCols
+                    (TableIDFromScanPrivate $scanPrivate)
+                )
+            )
+            $ok
+        )
+)
+=>
+(Project
+    (Union
+        $leftProject:(Project
+            (Select
+                $leftScan:(Scan
+                    (AddPrimaryKeyColsToScanPrivate
+                        (DuplicateScanPrivate $scanPrivate)
+                    )
+                )
+                (MapFilterCols
+                    (ReplaceFiltersItem
+                        $filters
+                        $itemToReplace
+                        $leftFilter
+                    )
+                    $outCols:(UnionCols
+                        (OutputCols $input)
+                        (PrimaryKeyCols
+                            (TableIDFromScanPrivate $scanPrivate)
+                        )
+                    )
+                    (OutputCols $leftScan)
+                )
+            )
+            []
+            (remapColSet
+                $projectCols
+                $outCols
+                (OutputCols $leftScan)
+            )
+        )
+        $rightProject:(Project
+            (Select
+                $rightScan:(Scan
+                    (AddPrimaryKeyColsToScanPrivate
+                        (DuplicateScanPrivate $scanPrivate)
+                    )
+                )
+                (MapFilterCols
+                    (ReplaceFiltersItem
+                        $filters
+                        $itemToReplace
+                        $rightFilter
+                    )
+                    $outCols
+                    (OutputCols $rightScan)
+                )
+            )
+            []
+            (remapColSet
+                $projectCols
+                $outCols
+                (OutputCols $rightScan)
+            )
+        )
+        (MakeSetPrivate
+            (OutputCols $leftProject)
+            (OutputCols $rightProject)
+            $projectCols
+        )
+    )
+    []
+    $projectCols
+)
