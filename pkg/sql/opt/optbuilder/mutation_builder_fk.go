@@ -681,7 +681,7 @@ func (h *fkCheckHelper) buildInsertionCheck() memo.FKChecksItem {
 					))
 				}
 			}
-			withScanScope.expr = f.ConstructSelect(withScanScope.expr, filters)
+			withScanScope.expr = f.ConstructSelect(withScanScope.expr, filters, &memo.SelectPrivate{})
 
 		case tree.MatchFull:
 			// Filter out any rows which have NULLs on all referencing columns.
@@ -708,6 +708,7 @@ func (h *fkCheckHelper) buildInsertionCheck() memo.FKChecksItem {
 			withScanScope.expr = f.ConstructSelect(
 				withScanScope.expr,
 				memo.FiltersExpr{f.ConstructFiltersItem(condition)},
+				&memo.SelectPrivate{},
 			)
 
 		default:

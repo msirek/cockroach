@@ -1915,3 +1915,290 @@ vectorized: true
   missing stats
   table: t4@t4_pkey
   spans: [/1/1 - /1/1] [/1/5 - /1/5] [/5/1 - /5/1] [/5/5 - /5/5]
+
+# ------------------------------------------------------------------------------
+# Test covering index with ORed predicates
+# ------------------------------------------------------------------------------
+statement ok
+CREATE TABLE abc_ors_test (
+  a INT,
+  b INT,
+  c INT,
+  INDEX ab (a, b),
+  INDEX ba (b, a),
+  INDEX c (c) COVERING(a)
+); INSERT INTO abc_ors_test SELECT g, cast(g/10 as int), g FROM generate_series(1,100) g(g); ANALYZE abc_ors_test
+
+# A union all of covering index scans should not invoke index join
+query T
+EXPLAIN SELECT a FROM abc_ors_test WHERE a = 1 or c = 3
+----
+distribution: local
+vectorized: true
+·
+• distinct
+│ estimated row count: 2
+│ distinct on: rowid
+│
+└── • union all
+    │ estimated row count: 2
+    │
+    ├── • scan
+    │     estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+    │     table: abc_ors_test@ab
+    │     spans: [/1 - /1]
+    │
+    └── • scan
+          estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+          table: abc_ors_test@c
+          spans: [/3 - /3]
+
+# A union all of covering index scans should not invoke index join
+query T
+EXPLAIN SELECT a FROM abc_ors_test WHERE a in (1,5,10) or c = 3
+----
+distribution: local
+vectorized: true
+·
+• distinct
+│ estimated row count: 4
+│ distinct on: rowid
+│
+└── • union all
+    │ estimated row count: 4
+    │
+    ├── • scan
+    │     estimated row count: 3 (3.0% of the table; stats collected <hidden> ago)
+    │     table: abc_ors_test@ab
+    │     spans: [/1 - /1] [/5 - /5] [/10 - /10]
+    │
+    └── • scan
+          estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+          table: abc_ors_test@c
+          spans: [/3 - /3]
+
+# A union all of covering index scans should not invoke index join
+query T
+EXPLAIN SELECT a FROM abc_ors_test WHERE a = 1 or b = 2 or c = 3
+----
+distribution: local
+vectorized: true
+·
+• distinct
+│ estimated row count: 12
+│ distinct on: rowid
+│
+└── • union all
+    │ estimated row count: 12
+    │
+    ├── • scan
+    │     estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+    │     table: abc_ors_test@ab
+    │     spans: [/1 - /1]
+    │
+    └── • distinct
+        │ estimated row count: 11
+        │ distinct on: rowid
+        │
+        └── • union all
+            │ estimated row count: 11
+            │
+            ├── • scan
+            │     estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+            │     table: abc_ors_test@c
+            │     spans: [/3 - /3]
+            │
+            └── • scan
+                  estimated row count: 10 (10% of the table; stats collected <hidden> ago)
+                  table: abc_ors_test@ba
+                  spans: [/2 - /2]
+
+# Projection with 2 columns; only the scan from index c should use index join
+query T
+EXPLAIN SELECT a+b FROM abc_ors_test WHERE a = 1 or b = 2 or c = 3
+----
+distribution: local
+vectorized: true
+·
+• render
+│ estimated row count: 12
+│
+└── • distinct
+    │ estimated row count: 12
+    │ distinct on: rowid
+    │
+    └── • union all
+        │ estimated row count: 12
+        │
+        ├── • scan
+        │     estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+        │     table: abc_ors_test@ab
+        │     spans: [/1 - /1]
+        │
+        └── • distinct
+            │ estimated row count: 11
+            │ distinct on: rowid
+            │
+            └── • union all
+                │ estimated row count: 11
+                │
+                ├── • index join
+                │   │ estimated row count: 1
+                │   │ table: abc_ors_test@abc_ors_test_pkey
+                │   │
+                │   └── • scan
+                │         estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+                │         table: abc_ors_test@c
+                │         spans: [/3 - /3]
+                │
+                └── • scan
+                      estimated row count: 10 (10% of the table; stats collected <hidden> ago)
+                      table: abc_ors_test@ba
+                      spans: [/2 - /2]
+
+# ------------------------------------------------------------------------------
+# Test covering index and primary key with ORed predicates
+# ------------------------------------------------------------------------------
+# Union of index scans on a PK table
+statement ok
+CREATE TABLE abc_pk_ors_test (
+  a INT,
+  b INT,
+  c INT,
+  PRIMARY KEY (a),
+  INDEX ba (b, a),
+  INDEX c (c)
+); INSERT INTO abc_pk_ors_test SELECT g, cast(g/10 as int), g FROM generate_series(1,100) g(g); ANALYZE abc_pk_ors_test
+
+# A union all of covering index scans should not invoke index join
+query T
+EXPLAIN SELECT a FROM abc_pk_ors_test WHERE a = 1 or c = 3
+----
+distribution: local
+vectorized: true
+·
+• distinct
+│ estimated row count: 2
+│ distinct on: a
+│ order key: a
+│
+└── • union all
+    │ estimated row count: 2
+    │
+    ├── • scan
+    │     estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+    │     table: abc_pk_ors_test@abc_pk_ors_test_pkey
+    │     spans: [/1 - /1]
+    │
+    └── • scan
+          estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+          table: abc_pk_ors_test@c
+          spans: [/3 - /3]
+
+# A union all of covering index scans should not invoke index join
+query T
+EXPLAIN SELECT a FROM abc_pk_ors_test WHERE a in (1,5,10) or c = 3
+----
+distribution: local
+vectorized: true
+·
+• distinct
+│ estimated row count: 4
+│ distinct on: a
+│ order key: a
+│
+└── • union all
+    │ estimated row count: 4
+    │
+    ├── • scan
+    │     estimated row count: 3 (3.0% of the table; stats collected <hidden> ago)
+    │     table: abc_pk_ors_test@abc_pk_ors_test_pkey
+    │     spans: [/1 - /1] [/5 - /5] [/10 - /10]
+    │
+    └── • scan
+          estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+          table: abc_pk_ors_test@c
+          spans: [/3 - /3]
+
+# A union all of covering index scans should not invoke index join
+query T
+EXPLAIN SELECT a FROM abc_pk_ors_test WHERE a = 1 or b = 2 or c = 3
+----
+distribution: local
+vectorized: true
+·
+• distinct
+│ estimated row count: 12
+│ distinct on: a
+│ order key: a
+│
+└── • union all
+    │ estimated row count: 12
+    │
+    ├── • scan
+    │     estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+    │     table: abc_pk_ors_test@abc_pk_ors_test_pkey
+    │     spans: [/1 - /1]
+    │
+    └── • distinct
+        │ estimated row count: 11
+        │ distinct on: a
+        │ order key: a
+        │
+        └── • union all
+            │ estimated row count: 11
+            │
+            ├── • scan
+            │     estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+            │     table: abc_pk_ors_test@c
+            │     spans: [/3 - /3]
+            │
+            └── • scan
+                  estimated row count: 10 (10% of the table; stats collected <hidden> ago)
+                  table: abc_pk_ors_test@ba
+                  spans: [/2 - /2]
+
+# Projection with 2 columns; only the scan from index c should use index join
+query T
+EXPLAIN SELECT CASE WHEN a > 2 THEN a ELSE b-a END FROM abc_pk_ors_test WHERE a = 1 or b = 2 or c = 3
+----
+distribution: local
+vectorized: true
+·
+• render
+│ estimated row count: 12
+│
+└── • distinct
+    │ estimated row count: 12
+    │ distinct on: a
+    │ order key: a
+    │
+    └── • union all
+        │ estimated row count: 12
+        │
+        ├── • scan
+        │     estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+        │     table: abc_pk_ors_test@abc_pk_ors_test_pkey
+        │     spans: [/1 - /1]
+        │
+        └── • distinct
+            │ estimated row count: 11
+            │ distinct on: a
+            │ order key: a
+            │
+            └── • union all
+                │ estimated row count: 11
+                │
+                ├── • index join
+                │   │ estimated row count: 1
+                │   │ table: abc_pk_ors_test@abc_pk_ors_test_pkey
+                │   │
+                │   └── • scan
+                │         estimated row count: 1 (1.0% of the table; stats collected <hidden> ago)
+                │         table: abc_pk_ors_test@c
+                │         spans: [/3 - /3]
+                │
+                └── • scan
+                      estimated row count: 10 (10% of the table; stats collected <hidden> ago)
+                      table: abc_pk_ors_test@ba
+                      spans: [/2 - /2]

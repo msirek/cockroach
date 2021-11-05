@@ -26,9 +26,10 @@
             ...
         ] &
         ^(IsFilterFalse $filters)
+    $selectPrivate:*
 )
 =>
-(Select $input (SimplifyFilters $filters))
+(Select $input (SimplifyFilters $filters) $selectPrivate)
 
 # ConsolidateSelectFilters consolidates filters that constrain a single
 # variable. For example, filters x >= 5 and x <= 10 would be combined into a
@@ -44,9 +45,13 @@
 # This rule is low priority so other rules in this file such as
 # RemoveNotNullCondition can run first.
 [ConsolidateSelectFilters, Normalize, LowPriority]
-(Select $input:* $filters:* & (CanConsolidateFilters $filters))
+(Select
+    $input:*
+    $filters:* & (CanConsolidateFilters $filters)
+    $selectPrivate:*
+)
 =>
-(Select $input (ConsolidateFilters $filters))
+(Select $input (ConsolidateFilters $filters) $selectPrivate)
 
 # DeduplicateSelectFilters removes duplicate filters in a Select. Duplicate
 # filters are usually eliminated by a combination of filter-simplifying rules,
@@ -58,24 +63,36 @@
 # This rule is low priority. All other Select rules should run first to avoid
 # trying to deduplicate filters multiple times during normalization.
 [DeduplicateSelectFilters, Normalize, LowPriority]
-(Select $input:* $filters:* & (HasDuplicateFilters $filters))
+(Select
+    $input:*
+    $filters:* & (HasDuplicateFilters $filters)
+    $selectPrivate:*
+)
 =>
-(Select $input (DeduplicateFilters $filters))
+(Select $input (DeduplicateFilters $filters) $selectPrivate)
 
 # EliminateSelect discards an unnecessary Select operator in the case where its
 # filter is always true. Keep this near the top of the file so that it tends to
 # be checked early.
 [EliminateSelect, Normalize]
-(Select $input:* [])
+(Select $input:* [] *)
 =>
 $input
 
 # MergeSelects combines two nested Select operators into a single Select that
 # ANDs the filter conditions of the two Selects.
 [MergeSelects, Normalize]
-(Select (Select $input:* $innerFilters:*) $filters:*)
+(Select
+    (Select $input:* $innerFilters:* *)
+    $filters:*
+    $selectPrivate:*
+)
 =>
-(Select $input (ConcatFilters $innerFilters $filters))
+(Select
+    $input
+    (ConcatFilters $innerFilters $filters)
+    $selectPrivate
+)
 
 # PushSelectIntoProject pushes the Select operator into its Project input. This
 # is typically preferable because it minimizes the number of rows which Project
@@ -90,6 +107,7 @@ $input
             (IsBoundBy $item $inputCols:(OutputCols $input))
         ...
     ]
+    $selectPrivate:*
 )
 =>
 (Select
@@ -97,11 +115,13 @@ $input
         (Select
             $input
             (ExtractBoundConditions $filters $inputCols)
+            (EmptySelectPrivate)
         )
         $projections
         $passthrough
     )
     (ExtractUnboundConditions $filters $inputCols)
+    $selectPrivate
 )
 
 # MergeSelectInnerJoin merges a Select operator with an InnerJoin input by
@@ -122,6 +142,7 @@ $input
         $private:*
     )
     $filters:*
+    $selectPrivate:*
 )
 =>
 ((OpName $input)
@@ -172,11 +193,16 @@ $input
             )
         ...
     ]
+    $selectPrivate:*
 )
 =>
 (Select
     ((OpName $input)
-        (Select $left [ (FiltersItem $condition) ])
+        (Select
+            $left
+            [ (FiltersItem $condition) ]
+            (EmptySelectPrivate)
+        )
         (Select
             $right
             [
@@ -184,11 +210,13 @@ $input
                     (MapJoinOpFilter $item $rightCols $equivFD)
                 )
             ]
+            (EmptySelectPrivate)
         )
         $on
         $private
     )
     (RemoveFiltersItem $filters $item)
+    $selectPrivate
 )
 
 # PushSelectIntoJoinLeft pushes Select filter conditions into the left side of
@@ -219,6 +247,7 @@ $input
         $item:* & (IsBoundBy $item $leftCols:(OutputCols $left))
         ...
     ]
+    $selectPrivate:*
 )
 =>
 (Select
@@ -226,12 +255,14 @@ $input
         (Select
             $left
             (ExtractBoundConditions $filters $leftCols)
+            (EmptySelectPrivate)
         )
         $right
         $on
         $private
     )
     (ExtractUnboundConditions $filters $leftCols)
+    $selectPrivate
 )
 
 # PushSelectIntoGroupBy pushes a Select condition below a GroupBy in the case
@@ -270,6 +301,7 @@ $input
             )
         ...
     ]
+    $selectPrivate:*
 )
 =>
 (Select
@@ -277,11 +309,13 @@ $input
         (Select
             $groupingInput
             (ExtractBoundConditions $filters $passthrough)
+            (EmptySelectPrivate)
         )
         $aggregations
         $groupingPrivate
     )
     (ExtractUnboundConditions $filters $passthrough)
+    $selectPrivate
 )
 
 # RemoveNotNullCondition removes a filter with an IS NOT NULL condition
@@ -299,9 +333,10 @@ $input
         )
         ...
     ]
+    $selectPrivate:*
 )
 =>
-(Select $input (RemoveFiltersItem $filters $item))
+(Select $input (RemoveFiltersItem $filters $item) $selectPrivate)
 
 # PushSelectIntoProjectSet pushes filters into a ProjectSet. In particular,
 # the filters that are bound to the input columns of the ProjectSet are
@@ -316,6 +351,7 @@ $input
             (IsBoundBy $item $inputCols:(OutputCols $input))
         ...
     ]
+    $selectPrivate:*
 )
 =>
 (Select
@@ -323,10 +359,12 @@ $input
         (Select
             $input
             (ExtractBoundConditions $filters $inputCols)
+            (EmptySelectPrivate)
         )
         $zip
     )
     (ExtractUnboundConditions $filters $inputCols)
+    $selectPrivate
 )
 
 # PushFilterIntoSetOp pushes filters down to both the left and right sides
@@ -381,6 +419,7 @@ $input
             (IsBoundBy $item $inputCols:(OutputCols $input))
         ...
     ]
+    $selectPrivate:*
 )
 =>
 (Select
@@ -388,12 +427,15 @@ $input
         (Select
             $left
             [ (FiltersItem (MapSetOpFilterLeft $item $colmap)) ]
+            (EmptySelectPrivate)
         )
         (Select
             $right
             [ (FiltersItem (MapSetOpFilterRight $item $colmap)) ]
+            (EmptySelectPrivate)
         )
         $colmap
     )
     (RemoveFiltersItem $filter $item)
+    $selectPrivate
 )

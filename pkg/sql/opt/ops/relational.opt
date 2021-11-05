@@ -165,6 +165,21 @@ define ValuesPrivate {
 define Select {
     Input RelExpr
     Filters FiltersExpr
+    _ SelectPrivate
+}
+
+[Private]
+define SelectPrivate {
+    # Cols, if non-empty, specifies the set of columns that the parent of the
+    # select operator projects. This may be a subset of the columns that the
+    # input relation contains. The select itself does not perform the
+    # projection. This information is useful to have so that transformation
+    # rules can be written which push down the projection into
+    # newly-manufactured relations without having to write separate
+    # transformation rules that match both the Select and the parent Project
+    # (to obtain the projection information), which would increase the search
+    # space and be more expensive to explore.
+    Cols ColSet
 }
 
 # Project modifies the set of columns returned by the input result set. Columns

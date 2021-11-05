@@ -334,7 +334,7 @@ func (cb *onDeleteFastCascadeBuilder) Build(
 		}
 
 		if len(filters) > 0 {
-			mb.outScope.expr = b.factory.ConstructSelect(mb.outScope.expr, filters)
+			mb.outScope.expr = b.factory.ConstructSelect(mb.outScope.expr, filters, &memo.SelectPrivate{})
 		}
 
 		// Set list of columns that will be fetched by the input expression.
@@ -851,6 +851,7 @@ func (b *Builder) buildUpdateCascadeMutationInput(
 	mutationInput = f.ConstructSelect(
 		mutationInput,
 		memo.FiltersExpr{f.ConstructFiltersItem(condition)},
+		&memo.SelectPrivate{},
 	)
 
 	on := make(memo.FiltersExpr, numFKCols)

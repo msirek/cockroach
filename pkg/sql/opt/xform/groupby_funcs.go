@@ -60,7 +60,7 @@ func (c *CustomFuncs) MakeMinMaxScalarSubqueriesWithFilter(
 		// column IDs in the filters and use that to build a new Select.
 		if len(filters) > 0 {
 			newFilters := c.MapFilterCols(filters, scanPrivate.Cols, newScanPrivate.Cols)
-			inputExpr = c.e.f.ConstructSelect(inputExpr, newFilters)
+			inputExpr = c.e.f.ConstructSelect(inputExpr, newFilters, &memo.SelectPrivate{})
 		}
 
 		var newAggrItem = aggs[i]

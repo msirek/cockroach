@@ -59,6 +59,7 @@
         (Select
             $input
             [ (FiltersItem (IsNot $variable (Null (AnyType)))) ]
+            (EmptySelectPrivate)
         )
         (IntConst 1)
         (MakeOrderingChoiceFromColumn (OpName $agg) $col)
@@ -233,6 +234,7 @@
             ^(ScanIsLimited $scanPrivate) &
             ^(ScanIsInverted $scanPrivate)
         $filters:*
+        *
     )
     $aggs:*
     $private:* &
@@ -247,7 +249,11 @@
         )
 )
 =>
-((OpName) (Select $unionScans $filters) $aggs $private)
+((OpName)
+    (Select $unionScans $filters (EmptySelectPrivate))
+    $aggs
+    $private
+)
 
 # EliminateIndexJoinOrProjectInsideGroupBy removes an IndexJoin or Project
 # operator if it can be proven that the removal does not affect the output of

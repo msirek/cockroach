@@ -825,7 +825,7 @@ func (jb *JoinOrderBuilder) memoize(
 		panic(errors.AssertionFailedf("invalid operator: %v", op))
 	}
 	if len(selectFilters) > 0 {
-		return jb.f.Memo().MemoizeSelect(join, selectFilters)
+		return jb.f.Memo().MemoizeSelect(join, selectFilters, &memo.SelectPrivate{})
 	}
 	return join
 }

@@ -345,7 +345,7 @@ func makeFilters(
 	// Create a fake Select and input so that normalization rules are run.
 	p := &props.Relational{OutputCols: cols, Cardinality: card, Stats: stats}
 	fakeRel := f.ConstructFakeRel(&memo.FakeRelPrivate{Props: p})
-	sel := f.ConstructSelect(fakeRel, filters)
+	sel := f.ConstructSelect(fakeRel, filters, &memo.SelectPrivate{})
 
 	// If the normalized relational expression is a Select, return the filters.
 	if s, ok := sel.(*memo.SelectExpr); ok {

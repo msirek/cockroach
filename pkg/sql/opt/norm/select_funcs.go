@@ -413,3 +413,64 @@ func (c *CustomFuncs) addConjuncts(
 	}
 	return filters, true
 }
+
+// EmptySelectPrivate constructs a new SelectPrivate with empty projection
+// information.
+func (c *CustomFuncs) EmptySelectPrivate() *memo.SelectPrivate {
+	return &memo.SelectPrivate{}
+}
+
+// MakeSelectPrivate constructs a new SelectPrivate containing the set of
+// projected columns in a parent projection operation, passed as colSet.
+func (c *CustomFuncs) MakeSelectPrivate(colSet opt.ColSet) *memo.SelectPrivate {
+	return &memo.SelectPrivate{colSet}
+}
+
+// OptionalProjectedCols returns the union of projected columns in selectPrivate
+// and keyCols, if selectPrivate.Cols is non-empty, otherwise returns the empty
+// set.
+func (c *CustomFuncs) OptionalProjectedCols(
+	selectPrivate *memo.SelectPrivate, keyCols opt.ColSet,
+) opt.ColSet {
+	if !selectPrivate.Cols.Empty() {
+		return c.UnionCols(selectPrivate.Cols, keyCols)
+	}
+	return opt.ColSet{}
+}
+
+// ProjectedColsFromSelectExpr returns the columns projected in the parent
+// of the SelectExpr which owns selectPrivate, if set. Otherwise, OutputCols of
+// the 'input' relation to the Select is returned.
+func (c *CustomFuncs) ProjectedColsFromSelectExpr(
+	selectPrivate *memo.SelectPrivate, inputRel memo.RelExpr,
+) opt.ColSet {
+	if !selectPrivate.Cols.Empty() {
+		return selectPrivate.Cols
+	}
+	return inputRel.Relational().OutputCols
+}
+
+// ProjectedColsFromSelectExprWithExtraCols returns the columns projected in the
+// parent of the SelectExpr which owns selectPrivate, plus columns specified in
+// extraCols. If selectPrivate.Cols is empty, OutputCols of the 'input' relation
+// to the Select is returned.
+func (c *CustomFuncs) ProjectedColsFromSelectExprWithExtraCols(
+	selectPrivate *memo.SelectPrivate, inputRel memo.RelExpr, extraCols opt.ColSet,
+) opt.ColSet {
+	if !selectPrivate.Cols.Empty() {
+		return c.UnionCols(selectPrivate.Cols, extraCols)
+	}
+	return c.UnionCols(inputRel.Relational().OutputCols, extraCols)
+}
+
+// BuildOptionalProjection wraps the passed-in SelectExpr in a projection with
+// projected columns passthroughColSet, if passthroughColSet is non-empty.
+// If passthroughColSet is empty, selectExpr is returned.
+func (c *CustomFuncs) BuildOptionalProjection(
+	selectExpr memo.RelExpr, passthroughColSet opt.ColSet,
+) memo.RelExpr {
+	if passthroughColSet.Empty() {
+		return selectExpr
+	}
+	return c.f.ConstructProject(selectExpr, memo.EmptyProjectionsExpr, passthroughColSet)
+}

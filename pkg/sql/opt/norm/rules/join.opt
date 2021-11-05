@@ -100,6 +100,7 @@
                 (MapJoinOpFilter $item $leftCols $equivFD)
             )
         ]
+        (EmptySelectPrivate)
     )
     (Select
         $right
@@ -108,6 +109,7 @@
                 (MapJoinOpFilter $item $rightCols $equivFD)
             )
         ]
+        (EmptySelectPrivate)
     )
     (RemoveFiltersItem $on $item)
     $private
@@ -268,7 +270,11 @@
 )
 =>
 ((OpName)
-    (Select $left (ExtractBoundConditions $on $leftCols))
+    (Select
+        $left
+        (ExtractBoundConditions $on $leftCols)
+        (EmptySelectPrivate)
+    )
     $right
     (ExtractUnboundConditions $on $leftCols)
     $private
@@ -293,7 +299,11 @@
 =>
 ((OpName)
     $left
-    (Select $right (ExtractBoundConditions $on $rightCols))
+    (Select
+        $right
+        (ExtractBoundConditions $on $rightCols)
+        (EmptySelectPrivate)
+    )
     (ExtractUnboundConditions $on $rightCols)
     $private
 )
@@ -393,7 +403,7 @@ $left
     $on:*
 )
 =>
-(Select $right $on)
+(Select $right $on (EmptySelectPrivate))
 
 # EliminateJoinNoColsRight eliminates an InnerJoin with a one row, zero column
 # right input set. These can be produced when a Values, scalar GroupBy, or other
@@ -407,7 +417,7 @@ $left
     $on:*
 )
 =>
-(Select $left $on)
+(Select $left $on (EmptySelectPrivate))
 
 # HoistJoinProjectRight lifts a passthrough Project operator from within a Join
 # operator's right input to outside the join. This often allows the Project
@@ -791,4 +801,5 @@ $left
         (OutputCols $left)
     )
     $on
+    (EmptySelectPrivate)
 )

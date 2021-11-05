@@ -72,6 +72,7 @@ $input
             )
         ...
     ]
+    $selectPrivate:*
 )
 =>
 (Select
@@ -83,6 +84,7 @@ $input
                 $partitionCols
                 $input
             )
+            (EmptySelectPrivate)
         )
         $fn
         $private
@@ -92,6 +94,7 @@ $input
         $partitionCols
         $input
     )
+    $selectPrivate
 )
 
 # PushLimitIntoWindow moves a Limit below a Window when able. This is

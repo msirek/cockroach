@@ -377,7 +377,11 @@
 )
 =>
 (ScalarGroupBy
-    (Select $input [ (FiltersItem $condition) ])
+    (Select
+        $input
+        [ (FiltersItem $condition) ]
+        (EmptySelectPrivate)
+    )
     [ (AggregationsItem $agg $aggColID) ]
     $groupingPrivate
 )

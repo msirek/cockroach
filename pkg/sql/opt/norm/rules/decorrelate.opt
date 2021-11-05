@@ -116,6 +116,7 @@
         (UnionCols (OutputCols $left) $passthrough)
     )
     $on
+    (EmptySelectPrivate)
 )
 
 # TryDecorrelateProjectSelect tries to decorrelate by hoisting a Select operator
@@ -134,6 +135,7 @@
                     $filters
                     (OutputCols $selectInput)
                 )
+            *
         )
         $projections:*
         $passthrough:*
@@ -340,6 +342,7 @@
             )
         )
         $on
+        (EmptySelectPrivate)
     )
     []
     (OutputCols2 $left $right)
@@ -492,6 +495,7 @@
         (OutputCols2 $left $right)
     )
     $on
+    (EmptySelectPrivate)
 )
 
 # TryDecorrelateSemiJoin maps a SemiJoin to an equivalent GroupBy/InnerJoin
@@ -602,6 +606,7 @@
         $private
     )
     (LimitToRowNumberFilter $limit $rowNumCol)
+    (EmptySelectPrivate)
 )
 
 # TryDecorrelateProjectSet "pushes down" an InnerJoinApply operator into a
@@ -620,6 +625,7 @@
 (Select
     (ProjectSet (InnerJoinApply $left $input [] $private) $zip)
     $on
+    (EmptySelectPrivate)
 )
 
 # TryDecorrelateWindow "pushes down" a Join into a Window operator, in an
@@ -728,6 +734,7 @@
             (AddColsToPartition $private (KeyCols $newLeft))
         )
         $on
+        (EmptySelectPrivate)
     )
     []
     (OutputCols2 $left $right)
@@ -799,11 +806,13 @@
             (FiltersItem (Exists $subquery:*))
         ...
     ]
+    $selectPrivate:*
 )
 =>
 (Select
     (SemiJoinApply $input $subquery [] (EmptyJoinPrivate))
     (RemoveFiltersItem $filters $item)
+    $selectPrivate
 )
 
 # HoistSelectNotExists extracts non-existential subqueries from Select filters,
@@ -821,11 +830,13 @@
             (FiltersItem (Not (Exists $subquery:*)))
         ...
     ]
+    $selectPrivate:*
 )
 =>
 (Select
     (AntiJoinApply $input $subquery [] (EmptyJoinPrivate))
     (RemoveFiltersItem $filters $item)
+    $selectPrivate
 )
 
 # HoistSelectSubquery extracts subqueries from a Select filter and joins them
@@ -844,6 +855,7 @@
 (Select
     $input:*
     $filters:[ ... $item:* & (HasHoistableSubquery $item) ... ]
+    $selectPrivate:*
 )
 =>
 (HoistSelectSubquery $input $filters)
@@ -927,6 +939,7 @@
         )
         ...
     ]
+    $selectPrivate:*
 )
 =>
 (Select
@@ -946,10 +959,12 @@
                         )
                     )
                 ]
+                (EmptySelectPrivate)
             )
             $anyPrivate
         )
     )
+    $selectPrivate
 )
 
 # NormalizeJoinAnyFilter is similar to NormalizeSelectAnyFilter, except that it
@@ -986,6 +1001,7 @@
                         )
                     )
                 ]
+                (EmptySelectPrivate)
             )
             $anyPrivate
         )
@@ -1012,6 +1028,7 @@
         )
         ...
     ]
+    $selectPrivate:*
 )
 =>
 (Select
@@ -1035,11 +1052,13 @@
                             )
                         )
                     ]
+                    (EmptySelectPrivate)
                 )
                 $anyPrivate
             )
         )
     )
+    $selectPrivate
 )
 
 # NormalizeJoinNotAnyFilter is similar to NormalizeSelectNotAnyFilter, except
@@ -1081,6 +1100,7 @@
                             )
                         )
                     ]
+                    (EmptySelectPrivate)
                 )
                 $anyPrivate
             )

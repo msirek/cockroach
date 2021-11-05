@@ -1106,6 +1106,7 @@ func (b *Builder) buildWhere(where *tree.Where, inScope *scope) {
 	inScope.expr = b.factory.ConstructSelect(
 		inScope.expr.(memo.RelExpr),
 		memo.FiltersExpr{b.factory.ConstructFiltersItem(filter)},
+		&memo.SelectPrivate{},
 	)
 }
 

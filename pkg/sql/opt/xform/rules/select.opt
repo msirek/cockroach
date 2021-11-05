@@ -127,42 +127,93 @@
             ):(SplitDisjunction $scanPrivate $filters)
             $ok
         )
+    $selectPrivate:* &
+        (Let ($keyCols):(KeyCols $input) $ok) &
+        (Let ($outCols):(OutputCols $input) $ok) &
+        (Let
+            (
+                $projectCols
+            ):(ProjectedColsFromSelectExprWithExtraCols
+                $selectPrivate
+                $input
+                $keyCols
+            )
+            $ok
+        ) &
+        (Let
+            ($optionalProjectCols):(OptionalProjectedCols
+                $selectPrivate
+                $keyCols
+            )
+            $ok
+        ) &
+        (Let
+            ($aggCols):(DifferenceCols $projectCols $keyCols) $ok
+        )
 )
 =>
-(DistinctOn
-    (UnionAll
-        (Select
-            $leftScan:(Scan (DuplicateScanPrivate $scanPrivate))
-            (MapFilterCols
-                (ReplaceFiltersItem
-                    $filters
-                    $itemToReplace
-                    $leftFilter
+(Project
+    (DistinctOn
+        (UnionAll
+            $leftBranch:(BuildOptionalProjection
+                (Select
+                    $leftScan:(Scan
+                        (DuplicateScanPrivate $scanPrivate)
+                    )
+                    (MapFilterCols
+                        (ReplaceFiltersItem
+                            $filters
+                            $itemToReplace
+                            $leftFilter
+                        )
+                        $outCols
+                        $leftOutputCols:(OutputCols $leftScan)
+                    )
+                    (MakeSelectPrivate
+                        $leftProjectColSet:(remapColSet
+                            $optionalProjectCols
+                            $outCols
+                            $leftOutputCols
+                        )
+                    )
                 )
-                (OutputCols $input)
-                (OutputCols $leftScan)
+                $leftProjectColSet
+            )
+            $rightBranch:(BuildOptionalProjection
+                (Select
+                    $rightScan:(Scan
+                        (DuplicateScanPrivate $scanPrivate)
+                    )
+                    (MapFilterCols
+                        (ReplaceFiltersItem
+                            $filters
+                            $itemToReplace
+                            $rightFilter
+                        )
+                        $outCols
+                        $rightOutputCols:(OutputCols $rightScan)
+                    )
+                    (MakeSelectPrivate
+                        $rightProjectColSet:(remapColSet
+                            $optionalProjectCols
+                            $outCols
+                            $rightOutputCols
+                        )
+                    )
+                )
+                $rightProjectColSet
+            )
+            (MakeSetPrivate
+                (OutputCols $leftBranch)
+                (OutputCols $rightBranch)
+                $projectCols
             )
         )
-        (Select
-            $rightScan:(Scan (DuplicateScanPrivate $scanPrivate))
-            (MapFilterCols
-                (ReplaceFiltersItem
-                    $filters
-                    $itemToReplace
-                    $rightFilter
-                )
-                (OutputCols $input)
-                (OutputCols $rightScan)
-            )
-        )
-        (MakeSetPrivate
-            (OutputCols $leftScan)
-            (OutputCols $rightScan)
-            (OutputCols $input)
-        )
+        (MakeAggCols ConstAgg $aggCols)
+        (MakeGrouping $keyCols (EmptyOrdering))
     )
-    (MakeAggCols ConstAgg (NonKeyCols $input))
-    (MakeGrouping (KeyCols $input) (EmptyOrdering))
+    []
+    $projectCols
 )
 
 # SplitDisjunctionAddKey performs a transformation similar to
@@ -211,53 +262,97 @@
             ):(SplitDisjunction $scanPrivate $filters)
             $ok
         )
+    $selectPrivate:* &
+        (Let
+            ($projectCols):(ProjectedColsFromSelectExpr
+                $selectPrivate
+                $input
+            )
+            $ok
+        ) &
+        (Let
+            ($pkCols):(PrimaryKeyCols
+                (TableIDFromScanPrivate $scanPrivate)
+            )
+            $ok
+        ) &
+        (Let
+            ($projectPlusPKCols):(UnionCols $projectCols $pkCols)
+            $ok
+        ) &
+        (Let
+            ($optionalProjectCols):(OptionalProjectedCols
+                $selectPrivate
+                $pkCols
+            )
+            $ok
+        ) &
+        (Let
+            ($outCols):(UnionCols (OutputCols $input) $pkCols)
+            $ok
+        )
 )
 =>
 (Project
     (Union
-        (Select
-            $leftScan:(Scan
-                (AddPrimaryKeyColsToScanPrivate
-                    (DuplicateScanPrivate $scanPrivate)
-                )
-            )
-            (MapFilterCols
-                (ReplaceFiltersItem
-                    $filters
-                    $itemToReplace
-                    $leftFilter
-                )
-                $outCols:(UnionCols
-                    (OutputCols $input)
-                    (PrimaryKeyCols
-                        (TableIDFromScanPrivate $scanPrivate)
+        $leftBranch:(BuildOptionalProjection
+            (Select
+                $leftScan:(Scan
+                    (AddPrimaryKeyColsToScanPrivate
+                        (DuplicateScanPrivate $scanPrivate)
                     )
                 )
-                (OutputCols $leftScan)
+                (MapFilterCols
+                    (ReplaceFiltersItem
+                        $filters
+                        $itemToReplace
+                        $leftFilter
+                    )
+                    $outCols
+                    $leftOutputCols:(OutputCols $leftScan)
+                )
+                (MakeSelectPrivate
+                    $leftProjectColSet:(remapColSet
+                        $optionalProjectCols
+                        $outCols
+                        $leftOutputCols
+                    )
+                )
             )
+            $leftProjectColSet
         )
-        (Select
-            $rightScan:(Scan
-                (AddPrimaryKeyColsToScanPrivate
-                    (DuplicateScanPrivate $scanPrivate)
+        $rightBranch:(BuildOptionalProjection
+            (Select
+                $rightScan:(Scan
+                    (AddPrimaryKeyColsToScanPrivate
+                        (DuplicateScanPrivate $scanPrivate)
+                    )
+                )
+                (MapFilterCols
+                    (ReplaceFiltersItem
+                        $filters
+                        $itemToReplace
+                        $rightFilter
+                    )
+                    $outCols
+                    $rightOutputCols:(OutputCols $rightScan)
+                )
+                (MakeSelectPrivate
+                    $rightProjectColSet:(remapColSet
+                        $optionalProjectCols
+                        $outCols
+                        $rightOutputCols
+                    )
                 )
             )
-            (MapFilterCols
-                (ReplaceFiltersItem
-                    $filters
-                    $itemToReplace
-                    $rightFilter
-                )
-                $outCols
-                (OutputCols $rightScan)
-            )
+            $rightProjectColSet
         )
         (MakeSetPrivate
-            (OutputCols $leftScan)
-            (OutputCols $rightScan)
-            $outCols
+            (OutputCols $leftBranch)
+            (OutputCols $rightBranch)
+            $projectPlusPKCols
         )
     )
     []
-    (OutputCols $input)
+    $projectCols
 )

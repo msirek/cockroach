@@ -65,6 +65,7 @@
     )
     $filters:* &
         (HasNullRejectingFilter $filters (OutputCols $right))
+    $selectPrivate:*
 )
 =>
 (Select
@@ -76,6 +77,7 @@
         $private
     )
     $filters
+    $selectPrivate
 )
 
 # RejectNullsRightJoin is symmetric with RejectNullsLeftJoin. It reduces a
@@ -89,9 +91,14 @@
     $input:(FullJoin $left:* $right:* $on:* $private:*)
     $filters:* &
         (HasNullRejectingFilter $filters (OutputCols $left))
+    $selectPrivate:*
 )
 =>
-(Select (LeftJoin $left $right $on $private) $filters)
+(Select
+    (LeftJoin $left $right $on $private)
+    $filters
+    $selectPrivate
+)
 
 # RejectNullsGroupBy pushes a "col IS NOT NULL" null-rejecting filter below the
 # GroupBy operator if it allows null rejection for that column (i.e. if it's in
@@ -126,6 +133,7 @@
             $filters
             $rejectCols:(RejectNullCols $input)
         )
+    $selectPrivate:*
 )
 =>
 (Select
@@ -143,11 +151,13 @@
                     )
                 )
             ]
+            (EmptySelectPrivate)
         )
         $aggregations
         $groupingPrivate
     )
     $filters
+    $selectPrivate
 )
 
 # RejectNullsUnderJoinLeft adds "col IS NOT NULL" null-rejecting filters to the
@@ -171,7 +181,11 @@
 )
 =>
 ((OpName)
-    (Select $left (MakeNullRejectFilters $nullRejectedCols))
+    (Select
+        $left
+        (MakeNullRejectFilters $nullRejectedCols)
+        (EmptySelectPrivate)
+    )
     $right
     $on
     $private
@@ -196,7 +210,11 @@
 =>
 ((OpName)
     $left
-    (Select $right (MakeNullRejectFilters $nullRejectedCols))
+    (Select
+        $right
+        (MakeNullRejectFilters $nullRejectedCols)
+        (EmptySelectPrivate)
+    )
     $on
     $private
 )
@@ -228,6 +246,7 @@
                 $rejectNullCols
             )
         )
+    $selectPrivate:*
 )
 =>
 (Select
@@ -246,9 +265,11 @@
                     )
                 )
             ]
+            (EmptySelectPrivate)
         )
         $projections
         $passthrough
     )
     $filters
+    $selectPrivate
 )

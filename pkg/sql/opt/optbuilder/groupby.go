@@ -441,7 +441,7 @@ func (b *Builder) buildAggregation(having opt.ScalarExpr, fromScope *scope) (out
 	if having != nil {
 		input := g.aggOutScope.expr.(memo.RelExpr)
 		filters := memo.FiltersExpr{b.factory.ConstructFiltersItem(having)}
-		g.aggOutScope.expr = b.factory.ConstructSelect(input, filters)
+		g.aggOutScope.expr = b.factory.ConstructSelect(input, filters, &memo.SelectPrivate{})
 	}
 
 	return g.aggOutScope

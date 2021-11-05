@@ -24,9 +24,13 @@
 #
 # This rule is high priority so that it runs before filter pushdown.
 [InlineConstVar, Normalize, HighPriority]
-(Select $input:* $filters:* & (CanInlineConstVar $filters))
+(Select
+    $input:*
+    $filters:*
+    $selectPrivate:* & (CanInlineConstVar $filters)
+)
 =>
-(Select $input (InlineConstVar $filters))
+(Select $input (InlineConstVar $filters) $selectPrivate)
 
 # InlineProjectConstants finds variable references in Projections expressions
 # that refer to constant input values, and then inlines those constant values
@@ -67,11 +71,13 @@
         $item:* & (ColsIntersect (OuterCols $item) $constCols)
         ...
     ]
+    $selectPrivate:*
 )
 =>
 (Select
     $input
     (InlineFilterConstants $filters $input $constCols)
+    $selectPrivate
 )
 
 # InlineJoinConstantsLeft finds variable references in a join condition that
@@ -149,10 +155,15 @@
         $passthrough:*
     )
     $filters:* & ^(FilterHasCorrelatedSubquery $filters)
+    $selectPrivate:*
 )
 =>
 (Project
-    (Select $input (InlineSelectProject $filters $projections))
+    (Select
+        $input
+        (InlineSelectProject $filters $projections)
+        (EmptySelectPrivate)
+    )
     $projections
     $passthrough
 )
@@ -252,6 +263,7 @@
                 $virtualColumns
             )
         )
+    $selectPrivate:*
 )
 =>
 (Select
@@ -259,11 +271,13 @@
         (Select
             $scan
             (InlineSelectProject $inlinableFilters $projections)
+            (EmptySelectPrivate)
         )
         $projections
         $passthrough
     )
     (DiffFilters $filters $inlinableFilters)
+    $selectPrivate
 )
 
 # InlineProjectInProject folds an inner Project operator into an outer Project

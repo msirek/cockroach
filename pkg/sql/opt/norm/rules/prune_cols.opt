@@ -73,21 +73,29 @@
 # below Project).
 [PruneSelectCols, Normalize]
 (Project
-    (Select $input:* $filters:*)
+    (Select $input:* $filters:* *)
     $projections:*
     $passthrough:* &
         (CanPruneCols
             $input
             $needed:(UnionCols3
                 (FilterOuterCols $filters)
-                (ProjectionOuterCols $projections)
+                $projectionOuterCols:(ProjectionOuterCols
+                    $projections
+                )
                 $passthrough
             )
         )
 )
 =>
 (Project
-    (Select (PruneCols $input $needed) $filters)
+    (Select
+        (PruneCols $input $needed)
+        $filters
+        (MakeSelectPrivate
+            (UnionCols $projectionOuterCols $passthrough)
+        )
+    )
     $projections
     $passthrough
 )

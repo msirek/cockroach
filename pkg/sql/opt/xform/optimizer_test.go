@@ -116,6 +116,7 @@ func TestDetachMemoRace(t *testing.T) {
 								f.ConstructConst(tree.NewDInt(10), types.Int),
 							),
 						)},
+						&memo.SelectPrivate{},
 					)
 				}
 				return f.CopyAndReplaceDefault(e, replaceFn)

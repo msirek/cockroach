@@ -207,7 +207,7 @@ func (b *indexScanBuilder) Build(grp memo.RelExpr) {
 			return
 		}
 
-		input = b.f.ConstructSelect(input, b.innerFilters)
+		input = b.f.ConstructSelect(input, b.innerFilters, &memo.SelectPrivate{})
 	}
 
 	// 4. Wrap input in inverted filter if it was added.

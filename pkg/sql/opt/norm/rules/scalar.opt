@@ -175,6 +175,7 @@ $input
             )
             ...
         ]
+        $selectPrivate:*
     )
     $subqueryPrivate:*
 )
@@ -186,6 +187,7 @@ $input
             (RemoveFiltersItem $filters $item)
             (SplitTupleEq $tuple $rhs)
         )
+        $selectPrivate
     )
     $subqueryPrivate
 )

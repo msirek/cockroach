@@ -145,7 +145,7 @@ func (c *CustomFuncs) HoistSelectSubquery(
 		}
 	}
 
-	sel := c.f.ConstructSelect(hoister.input(), newFilters)
+	sel := c.f.ConstructSelect(hoister.input(), newFilters, &memo.SelectPrivate{})
 	return c.f.ConstructProject(sel, memo.EmptyProjectionsExpr, c.OutputCols(input))
 }
 
@@ -399,7 +399,7 @@ func (c *CustomFuncs) TryAddKeyToScan(in memo.RelExpr) (_ memo.RelExpr, ok bool)
 	case *memo.SelectExpr:
 		if scan, ok := t.Input.(*memo.ScanExpr); ok {
 			if res, ok := augmentScan(scan); ok {
-				return c.f.ConstructSelect(res, t.Filters), true
+				return c.f.ConstructSelect(res, t.Filters, &memo.SelectPrivate{}), true
 			}
 		}
 	}
@@ -1010,6 +1010,7 @@ func (r *subqueryHoister) constructGroupByAny(
 							memo.FalseSingleton,
 						),
 					)},
+					&memo.SelectPrivate{},
 				),
 				memo.ProjectionsExpr{r.f.ConstructProjectionsItem(
 					r.f.ConstructIsNot(inputVar, memo.NullSingleton),

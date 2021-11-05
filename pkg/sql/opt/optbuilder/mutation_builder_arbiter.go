@@ -226,6 +226,7 @@ func (mb *mutationBuilder) buildAntiJoinForDoNothingArbiter(
 		fetchScope.expr = mb.b.factory.ConstructSelect(
 			fetchScope.expr,
 			memo.FiltersExpr{mb.b.factory.ConstructFiltersItem(predScalar)},
+			&memo.SelectPrivate{},
 		)
 	}
 
@@ -314,6 +315,7 @@ func (mb *mutationBuilder) buildLeftJoinForUpsertArbiter(
 		mb.fetchScope.expr = mb.b.factory.ConstructSelect(
 			mb.fetchScope.expr,
 			memo.FiltersExpr{mb.b.factory.ConstructFiltersItem(predScalar)},
+			&memo.SelectPrivate{},
 		)
 	}
 

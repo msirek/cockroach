@@ -178,6 +178,7 @@ func (b *Builder) buildPartialIndexPredicate(
 			&memo.FakeRelPrivate{Props: tableScope.expr.Relational()},
 		),
 		filters,
+		&memo.SelectPrivate{},
 	)
 
 	switch t := selExpr.(type) {
