@@ -65,13 +65,120 @@
 =>
 (Project $input $projections $passthrough)
 
+# SplitProjectedDisjunction performs a transformation similar to
+# SplitDisjunction, but it uses information from the parent Project operation
+# to allow pruning of unnecessary filter columns.
+# There is no distinction between accessed columns (e.g. for filter evaluation)
+# and projected columns in a ScanExpr.
+# They are both lumped together in OutputCols, so unless this
+# distinction is added, there is no clean way to handle projection pruning
+# without examining the ProjectExpr.
+[SplitProjectedDisjunction, Explore]
+(Project
+    (Select
+        $input:(Scan
+                $scanPrivate:* & (IsCanonicalScan $scanPrivate)
+            ) &
+            (HasStrictKey $input)
+        $filters:* &
+            (Let
+                (
+                    $leftFilter
+                    $rightFilter
+                    $itemToReplace
+                    $ok
+                ):(SplitDisjunction $scanPrivate $filters)
+                $ok
+            )
+    )
+    $projections:*
+    $passthrough:* &
+        (Let
+            ($projectCols):(UnionCols
+                $passthrough
+                (getExpressionColSet $projections)
+            )
+            $ok
+        ) &
+        (Let
+            ($aggCols):(DifferenceCols
+                $projectCols
+                (KeyCols $input))
+            $ok
+        ) &
+        ^(ColsAreEmpty $aggCols) &
+        (subsetOf $projectCols (OutputCols $input)) &
+        (subsetOf (KeyCols $input) $projectCols) &
+        (ColsAreStrictKey (IntersectionCols $projectCols (OutputCols $input)) $input)
+)
+=>
+(Project
+    $distinctOn:(DistinctOn
+        (UnionAll
+            $leftProject:(Project
+                (Select
+                    $leftScan:(Scan (DuplicateScanPrivate $scanPrivate))
+                    (MapFilterCols
+                        (ReplaceFiltersItem
+                            $filters
+                            $itemToReplace
+                            $leftFilter
+                        )
+                        $outCols:(OutputCols $input)
+                        (OutputCols $leftScan)
+                    )
+                )
+                []
+                (remapColSet
+                    $projectCols
+                    $outCols
+                    (OutputCols $leftScan)
+                )
+            )
+            $rightProject:(Project
+                (Select
+                    $rightScan:(Scan (DuplicateScanPrivate $scanPrivate))
+                    (MapFilterCols
+                        (ReplaceFiltersItem
+                            $filters
+                            $itemToReplace
+                            $rightFilter
+                        )
+                        $outCols
+                        (OutputCols $rightScan)
+                    )
+                )
+                []
+                (remapColSet
+                    $projectCols
+                    $outCols
+                    (OutputCols $rightScan)
+                )
+            )
+            (MakeSetPrivate
+                (OutputCols $leftProject)
+                (OutputCols $rightProject)
+                $projectCols
+            )
+        )
+        (MakeAggCols ConstAgg $aggCols)
+        (MakeGrouping (KeyCols $input) (EmptyOrdering))
+    )
+    $projections
+    $projectCols
+)
+
 # SplitProjectedDisjunctionAddKey performs a transformation similar to
 # SplitDisjunctionAddKey, but it uses information from the parent Project
 # operation to allow pruning of unnecessary filter columns.
-# There is no distinction between accessed columns and the selected columns
-# (OutputCols) in a ScanExpr, so there is no clean way to handle this pruning
-# currently without examining the ProjectExpr.
-#
+# There is no distinction between accessed columns (e.g. for filter evaluation)
+# and projected columns in a ScanExpr. They are both lumped together in
+# OutputCols, so unless this distinction is added, there is no clean way to
+# handle pruning of projected-away columns from a ScanExpr without examining the
+# ProjectExpr.
+# This rule handles both the HasStrictKey and ^HasStrictKey cases because
+# projection pruning may remove some strict key columns, making the HasStrictKey
+# approach invalid due to lack of all required grouping columns.
 [SplitProjectedDisjunctionAddKey, Explore]
 (Project
     (Select
@@ -93,9 +200,9 @@
     $projections:*
     $passthrough:* &
         (Let
-            ($projectCols):(UnionCols3
+            ($scanCols):(UnionCols3
                 $passthrough
-                (ProjectionCols $projections)
+                (getExpressionColSet $projections)
                 (PrimaryKeyCols
                     (TableIDFromScanPrivate $scanPrivate)
                 )
@@ -130,7 +237,7 @@
             )
             []
             (remapColSet
-                $projectCols
+                $scanCols
                 $outCols
                 (OutputCols $leftScan)
             )
@@ -154,7 +261,7 @@
             )
             []
             (remapColSet
-                $projectCols
+                $scanCols
                 $outCols
                 (OutputCols $rightScan)
             )
@@ -162,9 +269,9 @@
         (MakeSetPrivate
             (OutputCols $leftProject)
             (OutputCols $rightProject)
-            $projectCols
+            $scanCols
         )
     )
-    []
-    $projectCols
+    $projections
+    $passthrough
 )
