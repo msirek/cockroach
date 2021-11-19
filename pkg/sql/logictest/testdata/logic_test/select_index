@@ -643,3 +643,46 @@ SELECT k FROM t47976 WHERE
   (a > 4 OR b <= 5.23 OR c IN (1, 2, 3)) AND
   (a = 12 OR b = 15.23 OR c = 14) AND
   (a > 58 OR b < 0 OR c >= 13)
+
+# ------------------------------------------------------------------------------
+# Test covering index with ORed predicates
+# ------------------------------------------------------------------------------
+statement ok
+CREATE TABLE abc_ors_test (
+  a INT,
+  b INT,
+  c INT,
+  INDEX ab (a, b),
+  INDEX ba (b, a),
+  INDEX c (c) COVERING(a)
+); INSERT INTO abc_ors_test SELECT g, cast(g/10 as int)+30, g FROM generate_series(1,100) g(g); ANALYZE abc_ors_test
+
+query I
+SELECT a FROM abc_ors_test WHERE a = 1 or c = 3
+----
+1
+3
+
+query I
+SELECT a FROM abc_ors_test WHERE a in (1,5,10) or c = 3
+----
+1
+5
+10
+3
+
+query III
+SELECT a, b, a+b FROM abc_ors_test WHERE a in (1,5,10) or c = 3
+----
+1 30 31
+5 31 36
+10 31 41
+3 30 33
+
+query III
+SELECT a.b+a.a, a.a, a.b FROM abc_ors_test a, abc_ors_test b WHERE (a.a in (1,5,10) or b.c = 3) and a.a = b.a and a.b = b.b and a.c = b.c
+----
+31 1 30
+36 5 31
+41 10 31
+33 3 30

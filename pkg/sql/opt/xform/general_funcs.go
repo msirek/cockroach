@@ -118,7 +118,43 @@ func (c *CustomFuncs) remapColSet(toMapColSet, src, dst opt.ColSet) opt.ColSet {
 
 	var srcColList = src.ToList()
 	var dstColList = dst.ToList()
-	return opt.TranslateColSet(toMapColSet, srcColList, dstColList)
+	var remappedColSet = opt.TranslateColSet(toMapColSet, srcColList, dstColList)
+	if (remappedColSet.Len() != toMapColSet.Len()) {
+		panic(errors.AssertionFailedf(
+			"Remapped ColSet must have the same number of columns as source ColSet, source: %v, remapped: %v",
+			toMapColSet,
+			remappedColSet,
+		))
+	}
+	return remappedColSet
+}
+
+func (c *CustomFuncs) subsetOf(subset, superset opt.ColSet) bool {
+	return subset.SubsetOf(superset)
+}
+
+func (c *CustomFuncs) getExpressionColSet(projections memo.ProjectionsExpr) opt.ColSet{
+	var colSet opt.ColSet
+	for i := range projections {
+		visitChildrenAndBuildColSet(projections[i].Element, &colSet)
+	}
+	return colSet
+}
+
+func visitChildrenAndBuildColSet(e opt.Expr, colSet *opt.ColSet) {
+
+	switch t := e.(type) {
+	case *memo.VariableExpr:
+		colSet.Add(t.Col)
+		return
+
+	default:
+		for i, n := 0, e.ChildCount(); i < n; i++ {
+			visitChildrenAndBuildColSet(e.Child(i), colSet)
+		}
+	}
+
+	return
 }
 
 // checkConstraintFilters generates all filters that we can derive from the

@@ -11,6 +11,7 @@
 package norm
 
 import (
+	"fmt"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/cat"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/memo"
@@ -516,6 +517,14 @@ func DerivePruneCols(e memo.RelExpr) opt.ColSet {
 		// Any pruneable input columns can potentially be pruned, as long as they're
 		// not used by the filter.
 		sel := e.(*memo.SelectExpr)
+// msirek-temp->
+		switch sel.Filters[0].Condition.Op() {
+		case opt.OrOp:
+			fmt.Println("Found OrOp")
+		default:
+
+		}
+		// <- msirek-temp
 		relProps.Rule.PruneCols = DerivePruneCols(sel.Input).Copy()
 		usedCols := sel.Filters.OuterCols()
 		relProps.Rule.PruneCols.DifferenceWith(usedCols)

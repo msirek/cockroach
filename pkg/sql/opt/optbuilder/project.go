@@ -11,6 +11,7 @@
 package optbuilder
 
 import (
+	"fmt"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/memo"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
@@ -57,8 +58,24 @@ func (b *Builder) constructProject(input memo.RelExpr, cols []scopeColumn) memo.
 			colSet.Add(id)
 		}
 	}
+	// msirek-temp->
+	var retVal memo.RelExpr
+	switch input.Op() {
+	case opt.SelectOp:
+		expr := input.(*memo.SelectExpr)
+		switch expr.Filters[0].Condition.Op() {
+		case opt.OrOp:
+			fmt.Println("Found OrOp")
+		default:
 
-	return b.factory.ConstructProject(input, projections, passthrough)
+		}
+	default:
+
+
+	}
+	retVal = b.factory.ConstructProject(input, projections, passthrough)
+
+	return retVal
 }
 
 // dropOrderingAndExtraCols removes the ordering in the scope and projects away

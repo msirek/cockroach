@@ -105,11 +105,7 @@
                 $projectCols
                 (KeyCols $input))
             $ok
-        ) &
-        ^(ColsAreEmpty $aggCols) &
-        (subsetOf $projectCols (OutputCols $input)) &
-        (subsetOf (KeyCols $input) $projectCols) &
-        (ColsAreStrictKey (IntersectionCols $projectCols (OutputCols $input)) $input)
+        )
 )
 =>
 (Project
