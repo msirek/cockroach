@@ -174,7 +174,7 @@ bindir       := $(prefix)/bin
 
 # We always want to build from the vendor directory.
 # Avoid reusing GOFLAGS as that is overwritten by various release processes.
-GOMODVENDORFLAGS := -mod=vendor
+GOMODVENDORFLAGS := -mod=vendor -gcflags "all=-N -l"
 
 ifeq "$(findstring -j,$(shell ps -o args= $$PPID))" ""
 ifdef NCPUS
@@ -232,7 +232,7 @@ export CFLAGS CXXFLAGS LDFLAGS CGO_CFLAGS CGO_CXXFLAGS CGO_LDFLAGS TZ
 # toolchain.
 override LINKFLAGS = -X github.com/cockroachdb/cockroach/pkg/build.typ=$(BUILDTYPE) -extldflags "$(LDFLAGS)"
 
-GOMODVENDORFLAGS ?= -mod=vendor
+GOMODVENDORFLAGS ?= -mod=vendor -gcflags "all=-N -l"
 GOFLAGS ?=
 TAR     ?= tar
 
@@ -847,6 +847,7 @@ EXECGEN_TARGETS = \
   pkg/sql/colexec/colexechash/hash_utils.eg.go \
   pkg/sql/colexec/colexecjoin/crossjoiner.eg.go \
   pkg/sql/colexec/colexecjoin/hashjoiner.eg.go \
+  pkg/sql/colexec/colexecjoin/lookupjoiner.eg.go \
   pkg/sql/colexec/colexecjoin/mergejoinbase.eg.go \
   pkg/sql/colexec/colexecjoin/mergejoiner_exceptall.eg.go \
   pkg/sql/colexec/colexecjoin/mergejoiner_fullouter.eg.go \

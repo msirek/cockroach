@@ -624,6 +624,56 @@ message HashJoinerSpec {
   reserved 7;
 }
 
+// LookupJoinerSpec is the specification for a lookup join processor. The processor
+// has two inputs and one output.
+//
+// The processor works by reading the entire right input and putting it in a hash
+// table. Thus, there is no guarantee on the ordering of results that stem only
+// from the right input (in the case of RIGHT_OUTER, FULL_OUTER). However, it is
+// guaranteed that results that involve the left stream preserve the ordering;
+// i.e. all results that stem from left row (i) precede results that stem from
+// left row (i+1).
+//
+// The "internal columns" of a HashJoiner (see ProcessorSpec) are:
+// - for INNER, LEFT_OUTER, RIGHT_OUTER, FULL_OUTER - the concatenation of left
+//   input columns and right input columns.
+//   If the left input has N columns and the right input has M columns, the
+//   first N columns contain values from the left side and the following M
+//   columns contain values from the right side.
+// - for LEFT_SEMI, LEFT_ANTI, INTERSECT_ALL, EXCEPT_ALL - the left input
+//   columns.
+// - for RIGHT_SEMI, RIGHT_ANTI - the right input columns.
+//
+// Note that, regardless of the join type, an optional ON expression can refer
+// to columns from both inputs.
+message LookupJoinerSpec {
+  // The join constraints certain columns from the left stream to equal
+  // corresponding columns on the right stream. These must have the same length.
+  repeated uint32 left_eq_columns = 1 [packed = true];
+  repeated uint32 right_eq_columns = 2 [packed = true];
+
+  // "ON" expression (in addition to the equality constraints captured by the
+  // orderings). Assuming that the left stream has N columns and the right
+  // stream has M columns, in this expression variables @1 to @N refer to
+  // columns of the left stream and variables @(N+1) to @(N+M) refer to columns
+  // in the right stream.
+  optional Expression on_expr = 5 [(gogoproto.nullable) = false];
+
+  optional sqlbase.JoinType type = 6 [(gogoproto.nullable) = false];
+
+  // If true, it is guaranteed that the left equality columns form a key for
+  // the left input. In other words, no two rows from the left input have the
+  // same set of values on the left equality columns.
+  optional bool left_eq_columns_are_key = 8 [(gogoproto.nullable) = false];
+
+  // If true, it is guaranteed that the right equality columns form a key for
+  // the right input. In other words, no two rows from the right input have the
+  // same set of values on the right equality columns.
+  optional bool right_eq_columns_are_key = 9 [(gogoproto.nullable) = false];
+
+  reserved 7;
+}
+
 // InvertedJoinerSpec is the specification for an inverted join. The processor
 // has two inputs and one output.
 //
