@@ -1,0 +1,113 @@
+# Test ORed ON clause predicates which may be split into unions or 
+# intersections.
+# Use tables both with and without a primary key, to test when PK columns are
+# not included and also to allow null values.
+
+statement ok
+CREATE TABLE A(a1 INT, a2 INT, a3 INT, a4 INT, PRIMARY KEY(a1, a2, a3, a4))
+
+statement ok
+CREATE TABLE B(b1 INT, b2 INT, b3 INT, b4 INT,
+               INDEX (b1, b2) STORING (b3, b4),
+               INDEX (b2) STORING (b1, b3, b4),
+               INDEX (b3) STORING (b1, b2, b4))
+
+statement ok
+CREATE TABLE C(c1 INT, c2 INT, c3 INT, c4 INT)
+
+statement ok
+CREATE TABLE D(d1 INT, d2 INT, d3 INT, d4 INT,
+               INDEX d (d1) STORING (d2, d3, d4))
+
+# shared column values
+statement ok
+INSERT INTO A VALUES (0, 0, 0, 0),(1, 10, 100, 1000);
+INSERT INTO B VALUES (0, 0, 0, 0),(1, 10, 100, 1000);
+
+# duplicate rows
+statement ok
+INSERT INTO A VALUES (11, 110, 1100, 11000);
+INSERT INTO B VALUES (11, 110, 1100, 11000), (11, 110, 1100, 11000);
+
+# null values
+statement ok
+INSERT INTO B VALUES (NULL, NULL, NULL, NULL), (NULL, NULL, NULL, NULL);
+
+# duplicates in first three columns
+statement ok
+INSERT INTO A VALUES (12, 120, 1200, 1), (12, 120, 1200, 2);
+INSERT INTO B VALUES (12, 120, 1200, 1), (12, 120, 1200, 2), (12, 120, 1200, 2);
+
+# nulls combined with the duplicates
+statement ok
+INSERT INTO B VALUES (NULL, 120, 1200, 1)   , (12, NULL, 1200, 2);
+
+# partially shared combinations
+statement ok
+INSERT INTO A VALUES (2, 20, 200, 2000), (3, 30, 300, 3000), (4, 40, 400, 4000), (5, 50, 500, 5000), (6, 60, 600, 6000), (7, 70, 700, 7000);
+INSERT INTO B VALUES (2, 20, 200, 2000), (3, 30, 300, 3000),                     (5, 50, 500, 5000), (6, 60, 600, 6000)                    , (8, 80, 800, 8000), (9, 90, 900, 9000);
+
+# combinations with null values
+statement ok
+INSERT INTO B VALUES (2, NULL, 200, NULL), (3, 30, 300, NULL)    , (NULL, 40, 400, 4000)  , (NULL, NULL, NULL, 5000)                       , (7, NULL, 700, NULL);
+INSERT INTO B VALUES (2, 20, NULL, 200)  , (3, 30, 300, 3000)    , (4, NULL, NULL, NULL)  , (5, 50, NULL, 5000)                            , (7, NULL, 700, NULL);
+
+# combinations with null and unique values
+statement ok
+INSERT INTO B VALUES (82, NULL, 207, NULL), (NULL, 567, NULL, 789);
+
+# combinations with unique values
+statement ok
+INSERT INTO A VALUES (15,   55, 555, 5555), (15, 55,   500, 5555), (15, 50, 555,  5555);
+INSERT INTO B VALUES (17,   77, 777, 7777), (17, 77,   700, 7777), (17, 70, 777,  7777);
+INSERT INTO B VALUES (NULL, 77, 777, 7777), (17, NULL, 777, 7777), (17, 77, NULL, 7777);
+
+# cross column value matches (e.g. a1 = b2)
+statement ok
+INSERT INTO A VALUES (101, 200, 3000, 40);
+INSERT INTO A VALUES (102, 5, 60, 70);
+INSERT INTO A VALUES (103, 7, 8, 70);
+INSERT INTO A VALUES (104, 5, 5, 5);
+INSERT INTO A VALUES (50, 5, 5000, 500);
+INSERT INTO A VALUES (80, 11, 110, 11000);
+INSERT INTO B VALUES (30, 7, 40, 2);
+INSERT INTO B VALUES (120, 80, 90, 10);
+
+# Multiple DISTINCT ON clauses exhausts the 100MB in-mem temp storage pool
+query IIII rowsort
+SELECT DISTINCT ON (a1,a2,a3,a4) * FROM (
+SELECT     *
+FROM       A
+           WHERE EXISTS (SELECT * FROM B WHERE a1 = b1)
+           UNION ALL
+SELECT DISTINCT ON (a1,a2,a3,a4) * FROM (
+SELECT     *
+FROM       A
+           WHERE EXISTS (SELECT * FROM B WHERE a2 = b2)
+           UNION ALL
+SELECT DISTINCT ON (a1,a2,a3,a4) * FROM (
+SELECT     *
+FROM       A
+           WHERE EXISTS (SELECT * FROM B WHERE a3 = b3)
+           UNION ALL
+SELECT DISTINCT ON (a1,a2,a3,a4) * FROM (
+SELECT     *
+FROM       A
+           WHERE EXISTS (SELECT * FROM B WHERE a4 = b4)
+))));
+----
+0    0    0     0
+1    10   100   1000
+2    20   200   2000
+3    30   300   3000
+4    40   400   4000
+5    50   500   5000
+6    60   600   6000
+7    70   700   7000
+11   110  1100  11000
+12   120  1200  1
+12   120  1200  2
+80   11   110   11000
+15   50   555   5555
+103  7    8     70
+15   55   500   5555
