@@ -480,7 +480,7 @@ func (d *diskQueue) Close(ctx context.Context) error {
 	if totalSize > d.diskAcc.Used() {
 		totalSize = d.diskAcc.Used()
 	}
-	d.diskAcc.Shrink(ctx, totalSize)
+	d.diskAcc.Shrink2(ctx, totalSize, true)
 	return nil
 }
 

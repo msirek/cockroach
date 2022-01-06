@@ -13,9 +13,6 @@ package mon
 import (
 	"context"
 	"fmt"
-	"math"
-	"math/bits"
-
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/util"
 	"github.com/cockroachdb/cockroach/pkg/util/envutil"
@@ -25,6 +22,8 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/metric"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/errors"
+	"math"
+	"math/bits"
 )
 
 // BoundAccount and BytesMonitor together form the mechanism by which
@@ -414,7 +413,7 @@ func (mm *BytesMonitor) doStop(ctx context.Context, check bool) {
 			ctx, &mm.settings.SV,
 			"%s: unexpected %d leftover bytes",
 			log.Safe(mm.name), log.Safe(mm.mu.curAllocated))
-		mm.releaseBytes(ctx, mm.mu.curAllocated)
+		mm.releaseBytes(ctx, mm.mu.curAllocated, true)
 	}
 
 	mm.releaseBudget(ctx)
@@ -537,7 +536,7 @@ func (b *BoundAccount) Empty(ctx context.Context) {
 	b.reserved += b.used
 	b.used = 0
 	if b.reserved > b.mon.poolAllocationSize {
-		b.mon.releaseBytes(ctx, b.reserved-b.mon.poolAllocationSize)
+		b.mon.releaseBytes(ctx, b.reserved-b.mon.poolAllocationSize, true)
 		b.reserved = b.mon.poolAllocationSize
 	}
 }
@@ -568,8 +567,9 @@ func (b *BoundAccount) Close(ctx context.Context) {
 		// monitor -- "bytes out of the aether". This needs not be closed.
 		return
 	}
+
 	if a := b.allocated(); a > 0 {
-		b.mon.releaseBytes(ctx, a)
+		b.mon.releaseBytes(ctx, a, true)
 	}
 }
 
@@ -628,6 +628,14 @@ func (b *BoundAccount) Grow(ctx context.Context, x int64) error {
 
 // Shrink releases part of the cumulated allocations by the specified size.
 func (b *BoundAccount) Shrink(ctx context.Context, delta int64) {
+	b.Shrink2(ctx, delta, false)
+}
+
+// Shrink2 releases part of the cumulated allocations by the specified size.
+// If forClose is true, we are either ending an operation or intending to
+// release all registered bytes, so we don't honor maxAllocatedButUnusedBlocks,
+// but instead return delta bytes immediately to the pool.
+func (b *BoundAccount) Shrink2(ctx context.Context, delta int64, forClose bool){
 	if b == nil {
 		return
 	}
@@ -639,9 +647,17 @@ func (b *BoundAccount) Shrink(ctx context.Context, delta int64) {
 	}
 	b.used -= delta
 	b.reserved += delta
+	if b.mon == nil {
+		return
+	}
 	if b.reserved > b.mon.poolAllocationSize {
-		b.mon.releaseBytes(ctx, b.reserved-b.mon.poolAllocationSize)
+		b.mon.releaseBytes(ctx, b.reserved-b.mon.poolAllocationSize, forClose)
 		b.reserved = b.mon.poolAllocationSize
+	}
+	// When done with an allocated block, give it back to the pool.
+	if forClose && b.used == 0 && b.reserved == b.mon.poolAllocationSize {
+		b.mon.releaseBytes(ctx, b.mon.poolAllocationSize, forClose)
+		b.reserved = 0
 	}
 }
 
@@ -701,7 +717,10 @@ func (mm *BytesMonitor) reserveBytes(ctx context.Context, x int64) error {
 
 // releaseBytes releases bytes previously successfully registered via
 // reserveBytes().
-func (mm *BytesMonitor) releaseBytes(ctx context.Context, sz int64) {
+// If forClose is true, we are either ending an operation or intending to
+// release all registered bytes, so we don't honor maxAllocatedButUnusedBlocks,
+// but instead return sz bytes immediately to the pool.
+func (mm *BytesMonitor) releaseBytes(ctx context.Context, sz int64, forClose bool) {
 	mm.mu.Lock()
 	defer mm.mu.Unlock()
 	if mm.mu.curAllocated < sz {
@@ -714,7 +733,7 @@ func (mm *BytesMonitor) releaseBytes(ctx context.Context, sz int64) {
 	if mm.mu.curBytesCount != nil {
 		mm.mu.curBytesCount.Dec(sz)
 	}
-	mm.adjustBudget(ctx)
+	mm.adjustBudget(ctx, forClose)
 
 	if log.V(2) {
 		// We avoid VEventf here because we want to avoid computing the
@@ -769,9 +788,15 @@ func (mm *BytesMonitor) releaseBudget(ctx context.Context) {
 // from the pool than it currently has allocated. Bytes are relinquished when
 // there are at least maxAllocatedButUnusedBlocks*poolAllocationSize bytes
 // reserved but unallocated.
-func (mm *BytesMonitor) adjustBudget(ctx context.Context) {
+// If forClose is true, we are either ending an operation or intending to
+// release all registered bytes, so we don't honor maxAllocatedButUnusedBlocks,
+// but instead return the bytes immediately to the pool.
+func (mm *BytesMonitor) adjustBudget(ctx context.Context, forClose bool) {
 	// NB: mm.mu Already locked by releaseBytes().
-	margin := mm.poolAllocationSize * int64(maxAllocatedButUnusedBlocks)
+	margin := int64(0)
+	if (!forClose) {
+		margin = mm.poolAllocationSize * int64(maxAllocatedButUnusedBlocks)
+	}
 
 	neededBytes := mm.mu.curAllocated
 	if neededBytes <= mm.reserved.used {
@@ -780,6 +805,6 @@ func (mm *BytesMonitor) adjustBudget(ctx context.Context) {
 		neededBytes = mm.roundSize(neededBytes - mm.reserved.used)
 	}
 	if neededBytes <= mm.mu.curBudget.used-margin {
-		mm.mu.curBudget.Shrink(ctx, mm.mu.curBudget.used-neededBytes)
+		mm.mu.curBudget.Shrink2(ctx, mm.mu.curBudget.used-neededBytes, forClose)
 	}
 }
