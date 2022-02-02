@@ -125,7 +125,8 @@ func TestIndexConstraints(t *testing.T) {
 				var ic idxconstraint.Instance
 				ic.Init(
 					filters, optionalFilters, indexCols, sv.NotNullCols(), computedCols,
-					true /* consolidate */, &evalCtx, &f, nil,
+					true /* consolidate */, false, /*noPreferInclusive */
+					&evalCtx, &f, nil,
 				)
 				result := ic.Constraint()
 				var buf bytes.Buffer
@@ -241,7 +242,7 @@ func BenchmarkIndexConstraints(b *testing.B) {
 				ic.Init(
 					filters, nil /* optionalFilters */, indexCols, sv.NotNullCols(),
 					nil /* computedCols */, true, /* consolidate */
-					&evalCtx, &f, nil,
+					false /*noPreferInclusive */, &evalCtx, &f, nil,
 				)
 				_ = ic.Constraint()
 				_ = ic.RemainingFilters()

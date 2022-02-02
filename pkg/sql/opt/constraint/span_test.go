@@ -535,7 +535,7 @@ func TestSpanUnion(t *testing.T) {
 	testUnion := func(left, right Span, expected string) {
 		t.Helper()
 		sp := left
-		ok := sp.TryUnionWith(keyCtx, &right)
+		ok := sp.TryUnionWith(keyCtx, &right, false /* mergeOnlyIfRequired */)
 
 		var actual string
 		if ok {
@@ -589,7 +589,7 @@ func TestSpanUnion(t *testing.T) {
 	// either span.
 	mango2 := mango
 	pear2 := pear
-	mango2.TryUnionWith(keyCtx, &pear2)
+	mango2.TryUnionWith(keyCtx, &pear2, false /* mergeOnlyIfRequired */)
 	if mango2.Compare(keyCtx, &mango) != 0 {
 		t.Errorf("mango2 was incorrectly updated during TryUnionWith")
 	}

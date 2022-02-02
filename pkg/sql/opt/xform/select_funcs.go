@@ -305,6 +305,7 @@ func (c *CustomFuncs) GenerateConstrainedScans(
 			append(optionalFilters, partitionFilters...),
 			scanPrivate.Table,
 			index.Ordinal(),
+			false, /* noPreferInclusive */
 		)
 		if !ok {
 			return
@@ -316,6 +317,7 @@ func (c *CustomFuncs) GenerateConstrainedScans(
 				append(optionalFilters, inBetweenFilters...),
 				scanPrivate.Table,
 				index.Ordinal(),
+				false, /* noPreferInclusive */
 			)
 			if !ok {
 				panic(errors.AssertionFailedf("in-between filters didn't yield a constraint"))
@@ -836,8 +838,14 @@ func (c *CustomFuncs) GenerateInvertedIndexScans(
 // specified filter. If a constraint is derived, it is returned along with any
 // filter remaining after extracting the constraint. If no constraint can be
 // derived, then tryConstrainIndex returns ok = false.
+// If noPreferInclusive is true, we disable any calls to Span.PreferInclusive
+// which attempt to widen spans, and instead use the exact span widths as
+// defined by the filters.
 func (c *CustomFuncs) tryConstrainIndex(
-	requiredFilters, optionalFilters memo.FiltersExpr, tabID opt.TableID, indexOrd int,
+	requiredFilters, optionalFilters memo.FiltersExpr,
+	tabID opt.TableID,
+	indexOrd int,
+	noPreferInclusive bool,
 ) (constraint *constraint.Constraint, remainingFilters memo.FiltersExpr, ok bool) {
 	// Start with fast check to rule out indexes that cannot be constrained.
 	if !c.canMaybeConstrainNonInvertedIndex(requiredFilters, tabID, indexOrd) &&
@@ -845,7 +853,7 @@ func (c *CustomFuncs) tryConstrainIndex(
 		return nil, nil, false
 	}
 
-	ic := c.initIdxConstraintForIndex(requiredFilters, optionalFilters, tabID, indexOrd)
+	ic := c.initIdxConstraintForIndex(requiredFilters, optionalFilters, tabID, indexOrd, noPreferInclusive)
 	constraint = ic.Constraint()
 	if constraint.IsUnconstrained() {
 		return nil, nil, false

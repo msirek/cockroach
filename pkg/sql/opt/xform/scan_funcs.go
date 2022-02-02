@@ -200,6 +200,10 @@ func (c *CustomFuncs) GenerateLocalityOptimizedScan(
 	// Split the spans into local and remote sets.
 	localConstraint, remoteConstraint := c.splitSpans(idxConstraint, localSpans)
 
+	// Consolidate the spans minimize the cost of separate reads.
+	localConstraint.ConsolidateSpans(c.e.evalCtx, index)
+	remoteConstraint.ConsolidateSpans(c.e.evalCtx, index)
+
 	// Create the local scan.
 	localScanPrivate := c.DuplicateScanPrivate(scanPrivate)
 	localScanPrivate.LocalityOptimized = true
@@ -297,6 +301,11 @@ func (c *CustomFuncs) buildAllPartitionsConstraint(
 	checkConstraints := c.checkConstraintFilters(sp.Table)
 	partitionFilters, inBetweenFilters := c.partitionValuesFilters(sp.Table, index)
 
+	//var disjuncts memo.ScalarListExpr
+	//disjuncts = append(disjuncts, partitionFilters[0].Condition)
+	//disjuncts = append(disjuncts, inBetweenFilters[0].Condition)
+	//combinedFilters := memo.FiltersExpr{c.e.f.ConstructFiltersItem(c.constructOr(disjuncts))}
+
 	var partsConstraint *constraint.Constraint
 	var remainingFilters memo.FiltersExpr
 	var ok bool
@@ -305,6 +314,7 @@ func (c *CustomFuncs) buildAllPartitionsConstraint(
 		checkConstraints,
 		tabMeta.MetaID,
 		index.Ordinal(),
+		false, /* noPreferInclusive */
 	); !ok {
 		return nil, false
 	}
@@ -321,6 +331,7 @@ func (c *CustomFuncs) buildAllPartitionsConstraint(
 		checkConstraints,
 		tabMeta.MetaID,
 		index.Ordinal(),
+		true, /* noPreferInclusive */
 	); !ok {
 		return nil, false
 	}
@@ -328,7 +339,7 @@ func (c *CustomFuncs) buildAllPartitionsConstraint(
 	if remainingFilters != nil && len(remainingFilters) > 0 {
 		return nil, false
 	}
-	partsConstraint.UnionWith(c.e.evalCtx, inBetweenConstraint)
+	partsConstraint.UnionWithExtended(c.e.evalCtx, inBetweenConstraint, true /* mergeOnlyIfRequired */)
 
 	// Even though the partitioned constraints and the inBetween constraints
 	// were consolidated, we must make sure their Union is as well.

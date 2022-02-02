@@ -1057,3 +1057,101 @@ distribute
                                     │    └── [/'west' - /'west']
                                     ├── limit: 1
                                     └── key: ()
+
+exec-ddl
+DROP TABLE abc_part
+----
+
+exec-ddl
+CREATE TABLE abc_part (
+    r STRING NOT NULL,
+    t INT NOT NULL,
+    a INT PRIMARY KEY,
+    b INT,
+    c INT,
+    d INT,
+    UNIQUE WITHOUT INDEX (b),
+    UNIQUE WITHOUT INDEX (c),
+    UNIQUE INDEX b_idx (r, b) PARTITION BY LIST (r) (
+      PARTITION east VALUES IN (('east')),
+      PARTITION west VALUES IN (('west')),
+      PARTITION central VALUES IN (('central'))
+    ),
+    UNIQUE INDEX c_idx (r, t, c) PARTITION BY LIST (r, t) (
+      PARTITION east VALUES IN (('east', 1), ('east', 2)),
+      PARTITION west VALUES IN (('west', DEFAULT)),
+      PARTITION default VALUES IN (DEFAULT)
+    ),
+    INDEX d_idx (r, d) PARTITION BY LIST (r) (
+      PARTITION east VALUES IN (('east')),
+      PARTITION west VALUES IN (('west')),
+      PARTITION central VALUES IN (('central'))
+    )
+)
+----
+
+exec-ddl
+ALTER PARTITION "east" OF INDEX abc_part@b_idx CONFIGURE ZONE USING
+  num_voters = 5,
+  voter_constraints = '{+region=east: 2}',
+  lease_preferences = '[[+region=east]]'
+----
+
+exec-ddl
+ALTER PARTITION "west" OF INDEX abc_part@b_idx CONFIGURE ZONE USING
+  num_voters = 5,
+  voter_constraints = '{+region=west: 2}',
+  lease_preferences = '[[+region=west]]';
+----
+
+exec-ddl
+ALTER PARTITION "central" OF INDEX abc_part@b_idx CONFIGURE ZONE USING
+  num_voters = 5,
+  voter_constraints = '{+region=central: 2}',
+  lease_preferences = '[[+region=central]]';
+----
+
+exec-ddl
+ALTER PARTITION "east" OF INDEX abc_part@c_idx CONFIGURE ZONE USING
+  num_voters = 5,
+  voter_constraints = '{+region=east: 2}',
+  lease_preferences = '[[+region=east]]'
+----
+
+exec-ddl
+ALTER PARTITION "west" OF INDEX abc_part@c_idx CONFIGURE ZONE USING
+  num_voters = 5,
+  voter_constraints = '{+region=west: 2}',
+  lease_preferences = '[[+region=west]]'
+----
+
+exec-ddl
+ALTER PARTITION "default" OF INDEX abc_part@c_idx CONFIGURE ZONE USING
+  num_voters = 5,
+  lease_preferences = '[[+region=central]]';
+----
+
+exec-ddl
+ALTER PARTITION "east" OF INDEX abc_part@d_idx CONFIGURE ZONE USING
+  num_voters = 5,
+  voter_constraints = '{+region=east: 2}',
+  lease_preferences = '[[+region=east]]'
+----
+
+exec-ddl
+ALTER PARTITION "west" OF INDEX abc_part@d_idx CONFIGURE ZONE USING
+  num_voters = 5,
+  voter_constraints = '{+region=west: 2}',
+  lease_preferences = '[[+region=west]]';
+----
+
+exec-ddl
+ALTER PARTITION "central" OF INDEX abc_part@d_idx CONFIGURE ZONE USING
+  num_voters = 5,
+  voter_constraints = '{+region=central: 2}',
+  lease_preferences = '[[+region=central]]';
+----
+
+opt locality=(region=east) expect=GenerateLocalityOptimizedScan
+EXPLAIN SELECT a FROM abc_part LIMIT 3
+----

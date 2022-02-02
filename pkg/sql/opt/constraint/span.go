@@ -263,7 +263,9 @@ func (sp *Span) TryIntersectWith(keyCtx *KeyContext, other *Span) bool {
 // returns true. If the resulting span does not constrain the range [ - ], then
 // its IsUnconstrained method returns true, and it cannot be used as part of a
 // constraint in a constraint set.
-func (sp *Span) TryUnionWith(keyCtx *KeyContext, other *Span) bool {
+// If mergeOnlyIfRequired is true, spans with exact matches on start/end
+// boundaries will only be merged if both boundaries are inclusive.
+func (sp *Span) TryUnionWith(keyCtx *KeyContext, other *Span, mergeOnlyIfRequired bool) bool {
 	// Determine the minimum start boundary.
 	cmpStartKeys := sp.CompareStarts(keyCtx, other)
 
@@ -272,10 +274,20 @@ func (sp *Span) TryUnionWith(keyCtx *KeyContext, other *Span) bool {
 		// This span is less, so see if there's any "space" after it and before
 		// the start of the other span.
 		cmp = sp.end.Compare(keyCtx, other.start, sp.endExt(), other.startExt())
+		if mergeOnlyIfRequired && cmp == 0 {
+			if sp.endBoundary != IncludeBoundary || other.startBoundary != IncludeBoundary {
+				return false
+			}
+		}
 	} else if cmpStartKeys > 0 {
 		// This span is greater, so see if there's any "space" before it and
 		// after the end of the other span.
 		cmp = other.end.Compare(keyCtx, sp.start, other.endExt(), sp.startExt())
+		if mergeOnlyIfRequired && cmp == 0 {
+			if sp.startBoundary != IncludeBoundary || other.endBoundary != IncludeBoundary {
+				return false
+			}
+		}
 	}
 	if cmp < 0 {
 		// There's "space" between spans, so union of these spans can't be

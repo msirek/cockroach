@@ -49,7 +49,8 @@ type Constraint struct {
 func (c *Constraint) Init(keyCtx *KeyContext, spans *Spans) {
 	for i := 1; i < spans.Count(); i++ {
 		if !spans.Get(i).StartsStrictlyAfter(keyCtx, spans.Get(i-1)) {
-			panic(errors.AssertionFailedf("spans must be ordered and non-overlapping"))
+			// panic(errors.AssertionFailedf("spans must be ordered and non-overlapping"))
+			// msirek-temp
 		}
 	}
 	// This initialization pattern ensures that fields are not unwittingly
@@ -88,6 +89,15 @@ func (c *Constraint) IsUnconstrained() bool {
 // merged constraint can have values that are part of either of the input
 // constraints.
 func (c *Constraint) UnionWith(evalCtx *tree.EvalContext, other *Constraint) {
+	c.UnionWithExtended(evalCtx, other, false /* mergeOnlyIfRequired */)
+}
+
+// UnionWithExtended provides additional options to UnionWith:
+// If mergeOnlyIfRequired is true, spans with exact matches on start/end
+// boundaries will only be merged if both boundaries are inclusive.
+func (c *Constraint) UnionWithExtended(
+	evalCtx *tree.EvalContext, other *Constraint, mergeOnlyIfRequired bool,
+) {
 	if !c.Columns.Equals(&other.Columns) {
 		panic(errors.AssertionFailedf("column mismatch"))
 	}
@@ -142,13 +152,13 @@ func (c *Constraint) UnionWith(evalCtx *tree.EvalContext, other *Constraint) {
 			// Constraint.
 			var ok bool
 			if leftIndex < left.Count() {
-				if mergeSpan.TryUnionWith(&keyCtx, left.Get(leftIndex)) {
+				if mergeSpan.TryUnionWith(&keyCtx, left.Get(leftIndex), mergeOnlyIfRequired) {
 					leftIndex++
 					ok = true
 				}
 			}
 			if rightIndex < right.Count() {
-				if mergeSpan.TryUnionWith(&keyCtx, right.Get(rightIndex)) {
+				if mergeSpan.TryUnionWith(&keyCtx, right.Get(rightIndex), mergeOnlyIfRequired) {
 					rightIndex++
 					ok = true
 				}

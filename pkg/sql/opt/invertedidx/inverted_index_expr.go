@@ -413,6 +413,7 @@ func constrainPrefixColumns(
 		filters, optionalFilters,
 		prefixColumns, notNullCols, tabMeta.ComputedCols,
 		false, /* consolidate */
+		false, /*noPreferInclusive */
 		evalCtx, factory, index,
 	)
 	constraint = ic.UnconsolidatedConstraint()

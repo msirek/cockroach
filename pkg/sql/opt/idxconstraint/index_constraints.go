@@ -44,6 +44,8 @@ func (c *indexConstraintCtx) unconstrained(offset int, out *constraint.Constrain
 //
 // If swap is true, the start and end key/boundary are swapped (this is provided
 // just for convenience, to avoid having two branches in every caller).
+// If c.NoPreferInclusive is true, the exact span as defined by the startBoundary
+// and endBoundary is created,
 func (c *indexConstraintCtx) singleSpan(
 	offset int,
 	start constraint.Key,
@@ -60,7 +62,9 @@ func (c *indexConstraintCtx) singleSpan(
 		span.Init(end, endBoundary, start, startBoundary)
 	}
 	keyCtx := &c.keyCtx[offset]
-	span.PreferInclusive(keyCtx)
+	if !c.noPreferInclusive {
+		span.PreferInclusive(keyCtx)
+	}
 	out.InitSingleSpan(keyCtx, &span)
 }
 
@@ -1051,6 +1055,7 @@ func (ic *Instance) Init(
 	notNullCols opt.ColSet,
 	computedCols map[opt.ColumnID]opt.ScalarExpr,
 	consolidate bool,
+	noPreferInclusive bool,
 	evalCtx *tree.EvalContext,
 	factory *norm.Factory,
 	index cat.Index,
@@ -1069,7 +1074,7 @@ func (ic *Instance) Init(
 		ic.allFilters = requiredFilters[:len(requiredFilters):len(requiredFilters)]
 		ic.allFilters = append(ic.allFilters, optionalFilters...)
 	}
-	ic.indexConstraintCtx.init(columns, notNullCols, computedCols, evalCtx, factory, index)
+	ic.indexConstraintCtx.init(columns, notNullCols, computedCols, evalCtx, factory, noPreferInclusive, index)
 	ic.tight = ic.makeSpansForExpr(0 /* offset */, &ic.allFilters, &ic.constraint)
 
 	// Note: If consolidate is true, we only consolidate spans at the
@@ -1159,6 +1164,12 @@ type indexConstraintCtx struct {
 
 	factory *norm.Factory
 
+	// If noPreferInclusive is true, we disable calling Span.PreferInclusive which
+	// attempts to widen single spans so they could be consolidated with
+	// neighboring spans.
+	// Instead we use the exact span widths as defined by the filters.
+	noPreferInclusive bool
+
 	// Metadata for the index of this index constraint.
 	index cat.Index
 }
@@ -1169,19 +1180,21 @@ func (c *indexConstraintCtx) init(
 	computedCols map[opt.ColumnID]opt.ScalarExpr,
 	evalCtx *tree.EvalContext,
 	factory *norm.Factory,
+	noPreferInclusive bool,
 	index cat.Index,
 ) {
 	// This initialization pattern ensures that fields are not unwittingly
 	// reused. Field reuse must be explicit.
 	*c = indexConstraintCtx{
-		md:           factory.Metadata(),
-		columns:      columns,
-		notNullCols:  notNullCols,
-		computedCols: computedCols,
-		evalCtx:      evalCtx,
-		factory:      factory,
-		keyCtx:       make([]constraint.KeyContext, len(columns)),
-		index:        index,
+		md:                factory.Metadata(),
+		columns:           columns,
+		notNullCols:       notNullCols,
+		computedCols:      computedCols,
+		evalCtx:           evalCtx,
+		factory:           factory,
+		keyCtx:            make([]constraint.KeyContext, len(columns)),
+		noPreferInclusive: noPreferInclusive,
+		index:             index,
 	}
 	for i := range columns {
 		c.keyCtx[i].EvalCtx = evalCtx

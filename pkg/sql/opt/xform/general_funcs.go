@@ -156,8 +156,14 @@ func (c *CustomFuncs) checkConstraintFilters(tabID opt.TableID) memo.FiltersExpr
 	return filters[:len(filters):len(filters)]
 }
 
+// If noPreferInclusive is true, we disable any calls to Span.PreferInclusive
+// which attempt to widen spans, and instead use the exact span widths as
+// defined by the filters.
 func (c *CustomFuncs) initIdxConstraintForIndex(
-	requiredFilters, optionalFilters memo.FiltersExpr, tabID opt.TableID, indexOrd int,
+	requiredFilters, optionalFilters memo.FiltersExpr,
+	tabID opt.TableID,
+	indexOrd int,
+	noPreferInclusive bool,
 ) (ic *idxconstraint.Instance) {
 	ic = &idxconstraint.Instance{}
 
@@ -186,7 +192,8 @@ func (c *CustomFuncs) initIdxConstraintForIndex(
 	ic.Init(
 		requiredFilters, optionalFilters,
 		columns, notNullCols, tabMeta.ComputedCols,
-		true /* consolidate */, c.e.evalCtx, c.e.f, index,
+		true /* consolidate */, noPreferInclusive,
+		c.e.evalCtx, c.e.f, index,
 	)
 	return ic
 }
@@ -594,6 +601,7 @@ func (c *CustomFuncs) getKnownScanConstraint(
 			filters,
 			sp.Table,
 			sp.Index,
+			false, /* noPreferInclusive */
 		)
 		cons = instance.Constraint()
 	}
