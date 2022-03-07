@@ -117,6 +117,10 @@ func (g *factoryGen) genConstructFuncs() {
 			g.w.writeIndent("return item\n")
 		} else {
 			g.w.writeIndent("_f.constructorStackDepth++\n")
+			g.w.nestIndent("if _f.SkipNormalization {\n")
+			g.w.writeIndent("// If explicitly instructed to, skip all normalization rules.\n")
+			g.w.writeIndent("goto SKIP_RULES\n")
+			g.w.unnest("}\n\n")
 			g.w.nestIndent("if _f.constructorStackDepth > maxConstructorStackDepth {\n")
 			g.w.writeIndent("// If the constructor call stack depth exceeds the limit, call\n")
 			g.w.writeIndent("// onMaxConstructorStackDepthExceeded and skip all rules.\n")

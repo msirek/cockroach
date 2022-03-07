@@ -654,10 +654,25 @@ func (sb *statisticsBuilder) makeTableStatistics(tabID opt.TableID) *props.Stati
 				cols.Add(tabID.ColumnID(stat.ColumnOrdinal(i)))
 			}
 
+			tabMeta := sb.md.TableMeta(tabID)
 			if colStat, ok := stats.ColStats.Add(cols); ok {
+				// Reuse a previous building of this ColumnStatistic if possible, but
+				// referencing the new ColumnID.
+				if cols.Len() == 1 {
+					if origColStatPtr, ok := tabMeta.OrigSingleColumnStats(cols.SingleColumn()); ok {
+						if origColStat, ok := origColStatPtr.(*props.ColumnStatistic); ok {
+							if origColStat.Cols.Len() == 1 && origColStat.Cols.SingleColumn() != cols.SingleColumn() {
+								colStat.CopyFromOther(origColStat, sb.evalCtx)
+								continue
+							}
+						}
+					}
+				} // msirek-temp
+
 				colStat.DistinctCount = float64(stat.DistinctCount())
 				colStat.NullCount = float64(stat.NullCount())
 				colStat.AvgSize = float64(stat.AvgSize())
+				invertedIndexCol := false
 				if cols.Len() == 1 && stat.Histogram() != nil &&
 					sb.evalCtx.SessionData().OptimizerUseHistograms {
 					col, _ := cols.Next(0)
@@ -670,6 +685,7 @@ func (sb *statisticsBuilder) makeTableStatistics(tabID opt.TableID) *props.Stati
 						colStat.Histogram = &props.Histogram{}
 						colStat.Histogram.Init(sb.evalCtx, col, stat.Histogram())
 					} else {
+						invertedIndexCol = true
 						for _, invertedColOrd := range invertedColOrds {
 							invCol := tabID.ColumnID(invertedColOrd)
 							invCols := opt.MakeColSet(invCol)
@@ -705,6 +721,14 @@ func (sb *statisticsBuilder) makeTableStatistics(tabID opt.TableID) *props.Stati
 				// were added at different times (and therefore have a different row
 				// count).
 				sb.finalizeFromRowCountAndDistinctCounts(colStat, stats)
+				if cols.Len() == 1 && !invertedIndexCol {
+					// Construct an empty selectivity bucket map so that it may be shared
+					// with subsequent copies via CopyFromOther().
+					if colStat.Histogram != nil {
+						colStat.Histogram.AddSelectivityAdjustedBuckets()
+					}
+					tabMeta.AddSingleColumnStats(colStat.Cols.SingleColumn(), colStat)
+				}
 			}
 		}
 	}
@@ -3454,9 +3478,15 @@ func (sb *statisticsBuilder) updateDistinctCountsFromConstraint(
 	//       -> Column a has DistinctCount = 1.
 	//       -> Column b has DistinctCount = 2.
 	//       -> Column c has DistinctCount = 5.
+	distinctCount := 1.0
 	for col := 0; col <= prefix; col++ {
+		// Don't attempt to apply more columns than exist in the constraint when the
+		// prefix length matches the constraint length.
+		if col > 0 && col >= c.Columns.Count() {
+			return applied, distinctCount
+		}
 		// All columns should have at least one distinct value.
-		distinctCount := 1.0
+		distinctCount = 1.0
 
 		var val tree.Datum
 		countable := true
@@ -4259,7 +4289,7 @@ func (sb *statisticsBuilder) buildStatsFromCheckConstraints(
 
 	// Reuse a previous building of this ColumnStatistic if possible, but
 	// referencing the new ColumnID.
-	if origColStatPtr, ok := tabMeta.OrigCheckConstraintsStats(colID); ok {
+	if origColStatPtr, ok := tabMeta.OrigSingleColumnStats(colID); ok {
 		if origColStat, ok := origColStatPtr.(*props.ColumnStatistic); ok {
 			if origColStat.Cols.Len() == 1 && origColStat.Cols.SingleColumn() != colID {
 				colStat.CopyFromOther(origColStat, sb.evalCtx)
@@ -4378,9 +4408,12 @@ func (sb *statisticsBuilder) buildStatsFromCheckConstraints(
 			if useHistogram {
 				colStat.Histogram = &props.Histogram{}
 				colStat.Histogram.Init(sb.evalCtx, firstColID, histogram)
+				// Construct an empty selectivity bucket map so that it may be shared
+				// with subsequent copies via CopyFromOther().
+				colStat.Histogram.AddSelectivityAdjustedBuckets()
 			}
 			sb.finalizeFromRowCountAndDistinctCounts(colStat, statistics)
-			tabMeta.AddCheckConstraintsStats(firstColID, colStat)
+			tabMeta.AddSingleColumnStats(firstColID, colStat)
 			return true
 		}
 	}

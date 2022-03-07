@@ -590,7 +590,7 @@ func (c *CustomFuncs) splitScanIntoUnionScansOrSelects(
 	// Map from cons Columns to new columns.
 	newScanPrivate.SetConstraint(c.e.evalCtx, &constraint.Constraint{
 		Columns: cons.Columns.RemapColumns(sp.Table, newScanPrivate.Table),
-		Spans:   noLimitSpans,
+		Spans:   &noLimitSpans,
 	})
 	newScanOrSelect := c.e.f.ConstructScan(newScanPrivate)
 	if !filters.IsTrue() {
@@ -653,6 +653,7 @@ func (c *CustomFuncs) numAllowedValues(
 func (c *CustomFuncs) wrapScanInLimitedSelect(
 	scan memo.RelExpr, originalScanPrivate *memo.ScanPrivate, filters memo.FiltersExpr, limit int,
 ) (limitedSelect memo.RelExpr) {
+	// c.e.f.SkipNormalization = true // msirek-temp
 	limitedSelect =
 		c.e.f.ConstructSelect(scan,
 			c.MapFilterCols(filters, originalScanPrivate.Cols,
@@ -664,6 +665,7 @@ func (c *CustomFuncs) wrapScanInLimitedSelect(
 			c.EmptyOrdering(),
 		)
 	}
+	// c.e.f.SkipNormalization = false // msirek-temp
 	return limitedSelect
 }
 
@@ -751,7 +753,7 @@ func (c *CustomFuncs) makeNewScan(
 	newSpans.InitSingleSpan(span)
 	newConstraint := &constraint.Constraint{
 		Columns: columns.RemapColumns(sp.Table, newScanPrivate.Table),
-		Spans:   newSpans,
+		Spans:   &newSpans,
 	}
 	newScanPrivate.SetConstraint(c.e.evalCtx, newConstraint)
 

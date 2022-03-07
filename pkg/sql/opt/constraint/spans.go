@@ -17,6 +17,8 @@ import (
 	"github.com/cockroachdb/errors"
 )
 
+var DummySpans = Spans{Span{}, nil, 0, false}
+
 // Spans is a collection of spans. There are no general requirements on the
 // contents of the spans in the structure; the caller has to make sure they make
 // sense in the respective context.
@@ -108,6 +110,11 @@ func (s Spans) String() string {
 // the Spans structure or any Span returned by Get.
 func (s *Spans) makeImmutable() {
 	s.immutable = true
+}
+
+// Immutable indicates if the Spans are immutable or not.
+func (s *Spans) Immutable() bool {
+	return s.immutable
 }
 
 // sortedAndMerged returns true if the collection of spans is strictly

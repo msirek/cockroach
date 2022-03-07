@@ -92,6 +92,12 @@ type Factory struct {
 	// methods. It is incremented when a constructor function is called, and
 	// decremented when a constructor function returns.
 	constructorStackDepth int
+
+	// SkipNormalization directs the factory to skip normalization of the input
+	// expression during construction. This is desirable in cases where we are
+	// copying an expression that's already been normalized, and applying the
+	// rules again would do nothing but add CPU overhead.
+	SkipNormalization bool
 }
 
 // maxConstructorStackDepth is the maximum allowed depth of a constructor call

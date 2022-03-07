@@ -466,19 +466,19 @@ func (md *Metadata) DuplicateTable(
 		}
 	}
 
-	var checkConstraintsStats map[ColumnID]interface{}
-	if len(tabMeta.checkConstraintsStats) > 0 {
-		checkConstraintsStats =
+	var singleColumnStats map[ColumnID]interface{}
+	if len(tabMeta.singleColumnStats) > 0 {
+		singleColumnStats =
 			make(map[ColumnID]interface{},
-				len(tabMeta.checkConstraintsStats))
-		for i := range tabMeta.checkConstraintsStats {
+				len(tabMeta.singleColumnStats))
+		for i := range tabMeta.singleColumnStats {
 			if dstCol, ok := colMap.Get(int(i)); ok {
 				// We remap the column ID key, but not any column IDs in the
 				// ColumnStatistic as this is still being used in the statistics of the
 				// original table and should be treated as immutable. When the Histogram
 				// is copied in ColumnStatistic.CopyFromOther, it is initialized with
 				// the proper column ID.
-				checkConstraintsStats[ColumnID(dstCol)] = tabMeta.checkConstraintsStats[i]
+				singleColumnStats[ColumnID(dstCol)] = tabMeta.singleColumnStats[i]
 			} else {
 				panic(errors.AssertionFailedf("remapping of check constraint stats column failed"))
 			}
@@ -494,7 +494,7 @@ func (md *Metadata) DuplicateTable(
 		ComputedCols:             computedCols,
 		partialIndexPredicates:   partialIndexPredicates,
 		indexPartitionLocalities: tabMeta.indexPartitionLocalities,
-		checkConstraintsStats:    checkConstraintsStats,
+		singleColumnStats:        singleColumnStats,
 	})
 
 	return newTabID

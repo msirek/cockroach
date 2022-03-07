@@ -96,6 +96,19 @@ func (s *Set) Length() int {
 	return int(s.length)
 }
 
+// Immutable indicates if all constraints in the Set are immutable.
+func (s *Set) Immutable() bool {
+	if s == nil {
+		return true
+	}
+	for i := 0; i < s.Length(); i++ {
+		if !s.Constraint(i).Immutable() {
+			return false
+		}
+	}
+	return true
+}
+
 // Constraint returns the nth constraint in the set. Together with the Length
 // method, Constraint allows iteration over the list of constraints (since
 // there is no method to return a slice of constraints).
@@ -142,7 +155,7 @@ func (s *Set) Intersect(evalCtx *tree.EvalContext, other *Set) *Set {
 	// so intersection can be done as a variation on merge sort.
 	for index < length || otherIndex < otherLength {
 		// Allocate the next constraint slot in the new set.
-		merge := mergeSet.allocConstraint(length - index + otherLength - otherIndex)
+		merge := mergeSet.AllocConstraint(length - index + otherLength - otherIndex)
 
 		var cmp int
 		if index >= length {
@@ -233,7 +246,7 @@ func (s *Set) Union(evalCtx *tree.EvalContext, other *Set) *Set {
 
 		// Constraints have same columns, so they're compatible and need to
 		// be merged. Allocate the next constraint slot in the new set.
-		merge := mergeSet.allocConstraint(length - index + otherLength - otherIndex)
+		merge := mergeSet.AllocConstraint(length - index + otherLength - otherIndex)
 
 		*merge = *s.Constraint(index)
 		merge.UnionWith(evalCtx, other.Constraint(otherIndex))
@@ -333,10 +346,10 @@ func (s *Set) HasSingleColumnConstValues(
 	return c.Columns.Get(0).ID(), constValues, true
 }
 
-// allocConstraint allocates space for a new constraint in the set and returns
+// AllocConstraint allocates space for a new constraint in the set and returns
 // a pointer to it. The first constraint is stored inline, and subsequent
 // constraints are stored in the otherConstraints slice.
-func (s *Set) allocConstraint(capacity int) *Constraint {
+func (s *Set) AllocConstraint(capacity int) *Constraint {
 	s.length++
 
 	// First constraint does not require heap allocation.
@@ -362,7 +375,7 @@ func (s *Set) allocConstraint(capacity int) *Constraint {
 }
 
 // undoAllocConstraint rolls back the previous allocation performed by
-// allocConstraint. The next call to allocConstraint will allocate the same
+// AllocConstraint. The next call to AllocConstraint will allocate the same
 // slot as before.
 func (s *Set) undoAllocConstraint() {
 	s.length--

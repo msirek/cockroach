@@ -41,7 +41,7 @@ type Constraint struct {
 
 	// Spans contains the spans in this constraint. The spans are always ordered
 	// and non-overlapping.
-	Spans Spans
+	Spans *Spans
 }
 
 // Init initializes the constraint to the columns in the key context and with
@@ -56,7 +56,7 @@ func (c *Constraint) Init(keyCtx *KeyContext, spans *Spans) {
 	// reused. Field reuse must be explicit.
 	*c = Constraint{
 		Columns: keyCtx.Columns,
-		Spans:   *spans,
+		Spans:   spans,
 	}
 	c.Spans.makeImmutable()
 }
@@ -68,6 +68,7 @@ func (c *Constraint) InitSingleSpan(keyCtx *KeyContext, span *Span) {
 	// reused. Field reuse must be explicit.
 	*c = Constraint{
 		Columns: keyCtx.Columns,
+		Spans:   &DummySpans,
 	}
 	c.Spans.InitSingleSpan(span)
 }
@@ -81,6 +82,11 @@ func (c *Constraint) IsContradiction() bool {
 // span.
 func (c *Constraint) IsUnconstrained() bool {
 	return c.Spans.Count() == 1 && c.Spans.Get(0).IsUnconstrained()
+}
+
+// Immutable indicates if this Constraint is immutable.
+func (c *Constraint) Immutable() bool {
+	return c.Spans.Immutable()
 }
 
 // UnionWith merges the spans of the given constraint into this constraint.  The
@@ -98,9 +104,9 @@ func (c *Constraint) UnionWith(evalCtx *tree.EvalContext, other *Constraint) {
 	// Use variation on merge sort, because both sets of spans are ordered and
 	// non-overlapping.
 
-	left := &c.Spans
+	left := c.Spans
 	leftIndex := 0
-	right := &other.Spans
+	right := other.Spans
 	rightIndex := 0
 	keyCtx := MakeKeyContext(&c.Columns, evalCtx)
 	var result Spans
@@ -165,7 +171,7 @@ func (c *Constraint) UnionWith(evalCtx *tree.EvalContext, other *Constraint) {
 		result.Append(&mergeSpan)
 	}
 
-	c.Spans = result
+	c.Spans = &result
 	c.Spans.makeImmutable()
 }
 
@@ -186,9 +192,9 @@ func (c *Constraint) IntersectWith(evalCtx *tree.EvalContext, other *Constraint)
 	// Use variation on merge sort, because both sets of spans are ordered and
 	// non-overlapping.
 
-	left := &c.Spans
+	left := c.Spans
 	leftIndex := 0
-	right := &other.Spans
+	right := other.Spans
 	rightIndex := 0
 	keyCtx := MakeKeyContext(&c.Columns, evalCtx)
 	var result Spans
@@ -218,7 +224,7 @@ func (c *Constraint) IntersectWith(evalCtx *tree.EvalContext, other *Constraint)
 		}
 	}
 
-	c.Spans = result
+	c.Spans = &result
 	c.Spans.makeImmutable()
 }
 
@@ -256,9 +262,9 @@ func (c *Constraint) Contains(evalCtx *tree.EvalContext, other *Constraint) bool
 
 	// Use variation on merge sort, because both sets of spans are ordered and
 	// non-overlapping.
-	left := &c.Spans
+	left := c.Spans
 	leftIndex := 0
-	right := &other.Spans
+	right := other.Spans
 	rightIndex := 0
 	keyCtx := MakeKeyContext(&c.Columns, evalCtx)
 
@@ -352,7 +358,7 @@ func (c *Constraint) Combine(evalCtx *tree.EvalContext, other *Constraint) {
 		return
 	}
 	if other.IsContradiction() {
-		c.Spans = Spans{}
+		c.Spans = &Spans{}
 		c.Spans.makeImmutable()
 		return
 	}
@@ -465,7 +471,7 @@ func (c *Constraint) Combine(evalCtx *tree.EvalContext, other *Constraint) {
 		}
 	}
 	if resultInitialized {
-		c.Spans = result
+		c.Spans = &result
 		c.Spans.makeImmutable()
 	}
 }
@@ -537,7 +543,7 @@ func (c *Constraint) ConsolidateSpans(evalCtx *tree.EvalContext, ps *partition.P
 		lastSpanIsLocal = spanIsLocal
 	}
 	if result.Count() != 0 {
-		c.Spans = result
+		c.Spans = &result
 		c.Spans.makeImmutable()
 	}
 }

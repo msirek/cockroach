@@ -176,12 +176,11 @@ type TableMeta struct {
 	// leaseholder preferred region which is different from the gateway region.
 	indexPartitionLocalities map[cat.IndexOrdinal]*partition.PrefixSorter
 
-	// checkConstraintsStats is a map from the current ColumnID statistics based
-	// on CHECK constraint values is based on back to the original ColumnStatistic
-	// entry that was built for a copy of this table. This is used to look up and
-	// reuse histogram data when a Scan is duplicated so this expensive processing
-	// is done at most once per table reference in a query.
-	checkConstraintsStats map[ColumnID]interface{}
+	// singleColumnStats is a map from a single ColumnID back to the original
+	// ColumnStatistic entry that was built for a copy of this table. This is used
+	// to look up and reuse histogram data when a Scan is duplicated so this
+	// expensive processing is done at most once per table reference in a query.
+	singleColumnStats map[ColumnID]interface{}
 
 	// anns annotates the table metadata with arbitrary data.
 	anns [maxTableAnnIDCount]interface{}
@@ -222,10 +221,10 @@ func (tm *TableMeta) copyFrom(from *TableMeta, copyScalarFn func(Expr) Expr) {
 		}
 	}
 
-	if from.checkConstraintsStats != nil {
-		tm.checkConstraintsStats = make(map[ColumnID]interface{}, len(from.checkConstraintsStats))
-		for i := range from.checkConstraintsStats {
-			tm.checkConstraintsStats[i] = from.checkConstraintsStats[i]
+	if from.singleColumnStats != nil {
+		tm.singleColumnStats = make(map[ColumnID]interface{}, len(from.singleColumnStats))
+		for i := range from.singleColumnStats {
+			tm.singleColumnStats[i] = from.singleColumnStats[i]
 		}
 	}
 
@@ -326,25 +325,24 @@ func (tm *TableMeta) AddPartialIndexPredicate(ord cat.IndexOrdinal, pred ScalarE
 	tm.partialIndexPredicates[ord] = pred
 }
 
-// AddCheckConstraintsStats adds a column, ColumnStatistic pair to the
-// checkConstraintsStats map. When the table is duplicated, the mapping from the
-// new check constraint ColumnID back to the original ColumnStatistic is
-// recorded so it can be reused.
-func (tm *TableMeta) AddCheckConstraintsStats(colID ColumnID, colStats interface{}) {
-	if tm.checkConstraintsStats == nil {
-		tm.checkConstraintsStats = make(map[ColumnID]interface{})
+// AddSingleColumnStats adds a column, ColumnStatistic pair to the
+// singleColumnStats map. When the table is duplicated, the mapping from the new
+// ColumnID back to the original ColumnStatistic is recorded so it can be
+// reused.
+func (tm *TableMeta) AddSingleColumnStats(colID ColumnID, colStats interface{}) {
+	if tm.singleColumnStats == nil {
+		tm.singleColumnStats = make(map[ColumnID]interface{})
 	}
-	tm.checkConstraintsStats[colID] = colStats
+	tm.singleColumnStats[colID] = colStats
 }
 
-// OrigCheckConstraintsStats looks up if statistics were ever created
-// based on a CHECK constraint on colID, and if so, returns the original
-// ColumnStatistic.
-func (tm *TableMeta) OrigCheckConstraintsStats(
+// OrigSingleColumnStats looks up if statistics were ever created based on
+// colID, and if so, returns the original ColumnStatistic.
+func (tm *TableMeta) OrigSingleColumnStats(
 	colID ColumnID,
 ) (origColumnStatistic interface{}, ok bool) {
-	if tm.checkConstraintsStats != nil {
-		if origColumnStatistic, ok = tm.checkConstraintsStats[colID]; ok {
+	if tm.singleColumnStats != nil {
+		if origColumnStatistic, ok = tm.singleColumnStats[colID]; ok {
 			return origColumnStatistic, true
 		}
 	}

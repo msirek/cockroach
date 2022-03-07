@@ -275,7 +275,10 @@ func (c *ColumnStatistic) CopyFromOther(other *ColumnStatistic, evalCtx *tree.Ev
 	c.AvgSize = other.AvgSize
 	if other.Histogram != nil && c.Cols.Len() == 1 {
 		c.Histogram = &Histogram{}
-		c.Histogram.Init(evalCtx, c.Cols.SingleColumn(), other.Histogram.buckets)
+		columnID := c.Cols.SingleColumn()
+		c.Histogram.InitWithMap(evalCtx, columnID, other.Histogram.buckets,
+			other.Histogram.selectivityAdjustedBuckets,
+		)
 	}
 }
 

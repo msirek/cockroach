@@ -34,11 +34,16 @@ import (
 
 // Histogram captures the distribution of values for a particular column within
 // a relational expression.
-// Histograms are immutable.
+// Histograms are immutable, except for the selectivityAdjustedBuckets map.
 type Histogram struct {
 	evalCtx *tree.EvalContext
 	col     opt.ColumnID
 	buckets []cat.HistogramBucket
+
+	// selectivityAdjustedBuckets saves the bucket results of previous calls to
+	// Histogram.ApplySelectivity. If a subsequent ApplySelectivity calls is
+	// encountered with the same Selectivity, the buckets are reused.
+	selectivityAdjustedBuckets map[Selectivity][]cat.HistogramBucket
 }
 
 func (h *Histogram) String() string {
@@ -62,10 +67,40 @@ func (h *Histogram) Init(
 	}
 }
 
-// copy returns a deep copy of the histogram.
+// InitWithMap initializes the histogram with data from the catalog plus a map
+// of selectivity-adjusted buckets.
+func (h *Histogram) InitWithMap(
+	evalCtx *tree.EvalContext,
+	col opt.ColumnID,
+	buckets []cat.HistogramBucket,
+	selectivityAdjustedBuckets map[Selectivity][]cat.HistogramBucket,
+) {
+	// This initialization pattern ensures that fields are not unwittingly
+	// reused. Field reuse must be explicit.
+	*h = Histogram{
+		evalCtx:                    evalCtx,
+		col:                        col,
+		buckets:                    buckets,
+		selectivityAdjustedBuckets: selectivityAdjustedBuckets,
+	}
+}
+
+// copy returns a deep copy of the histogram, minus selectivityAdjustedBuckets,
+// which is not copied.
 func (h *Histogram) copy() *Histogram {
 	buckets := make([]cat.HistogramBucket, len(h.buckets))
 	copy(buckets, h.buckets)
+	return &Histogram{
+		evalCtx: h.evalCtx,
+		col:     h.col,
+		buckets: buckets,
+	}
+}
+
+// shallowCopyWithNewBuckets creates makes a shell Histogram with evalCtx and
+// col copied over, but not selectivityAdjustedBuckets. New buckets as passed
+// in are used in the copy in place of the old buckets.
+func (h *Histogram) shallowCopyWithNewBuckets(buckets []cat.HistogramBucket) *Histogram {
 	return &Histogram{
 		evalCtx: h.evalCtx,
 		col:     h.col,
@@ -150,6 +185,35 @@ func (h *Histogram) maxDistinctValuesCount() float64 {
 	return count
 }
 
+// AddSelectivityAdjustedBuckets makes a map from Selectivity to HistogramBucket
+// slice in the Histogram h.
+func (h *Histogram) AddSelectivityAdjustedBuckets() {
+	if h.selectivityAdjustedBuckets == nil {
+		h.selectivityAdjustedBuckets = make(map[Selectivity][]cat.HistogramBucket)
+	}
+}
+
+func (h *Histogram) saveSelectivityAdjustedBuckets(
+	selectivity Selectivity, buckets []cat.HistogramBucket,
+) {
+	if h.selectivityAdjustedBuckets == nil {
+		h.selectivityAdjustedBuckets = make(map[Selectivity][]cat.HistogramBucket)
+	}
+	h.selectivityAdjustedBuckets[selectivity] = buckets
+}
+
+func (h *Histogram) getSelectivityAdjustedBuckets(
+	selectivity Selectivity,
+) ([]cat.HistogramBucket, bool) {
+	if h.selectivityAdjustedBuckets == nil {
+		return nil, false
+	}
+	if buckets, ok := h.selectivityAdjustedBuckets[selectivity]; ok {
+		return buckets, true
+	}
+	return nil, false
+}
+
 // maxDistinctValuesInRange returns the maximum number of distinct values in
 // the range [lowerBound, upperBound). It returns ok=false when it is not
 // possible to determine a finite value (which is the case for all types other
@@ -196,11 +260,17 @@ func (h *Histogram) filter(
 	prefix []tree.Datum,
 	columns constraint.Columns,
 ) *Histogram {
+	min := func(x, y int) int {
+		if x < y {
+			return x
+		}
+		return y
+	}
 	bucketCount := h.BucketCount()
 	filtered := &Histogram{
 		evalCtx: h.evalCtx,
 		col:     h.col,
-		buckets: make([]cat.HistogramBucket, 0, bucketCount),
+		buckets: make([]cat.HistogramBucket, 0, min(spanCount, bucketCount)),
 	}
 	if bucketCount == 0 {
 		return filtered
@@ -433,7 +503,15 @@ func (h *Histogram) addBucket(bucket *cat.HistogramBucket, desc bool) {
 // ApplySelectivity reduces the size of each histogram bucket according to
 // the given selectivity, and returns a new histogram with the results.
 func (h *Histogram) ApplySelectivity(selectivity Selectivity) *Histogram {
+	if buckets, ok := h.getSelectivityAdjustedBuckets(selectivity); ok {
+		histogram := h.shallowCopyWithNewBuckets(buckets)
+		return histogram
+	}
 	res := h.copy()
+	// If there is no adjustment to be done, save some CPU cycles.
+	if selectivity == OneSelectivity {
+		return res
+	}
 	for i := range res.buckets {
 		b := &res.buckets[i]
 
@@ -456,6 +534,7 @@ func (h *Histogram) ApplySelectivity(selectivity Selectivity) *Histogram {
 		// when d << n.
 		b.DistinctRange = d - d*math.Pow(1-selectivity.AsFloat(), n/d)
 	}
+	h.saveSelectivityAdjustedBuckets(selectivity, res.buckets)
 	return res
 }
 

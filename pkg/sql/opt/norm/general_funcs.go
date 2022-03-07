@@ -275,7 +275,9 @@ func (c *CustomFuncs) DuplicateColumnIDs(
 ) (opt.TableID, opt.ColSet) {
 	md := c.mem.Metadata()
 	tabMeta := md.TableMeta(table)
+	c.f.SkipNormalization = true
 	newTableID := md.DuplicateTable(table, c.RemapCols)
+	c.f.SkipNormalization = false
 
 	// Build a new set of column IDs from the new TableMeta.
 	var newColIDs opt.ColSet
@@ -287,6 +289,17 @@ func (c *CustomFuncs) DuplicateColumnIDs(
 
 	return newTableID, newColIDs
 }
+
+//  // msirek-temp
+//func ShallowCopyAndRemap(itemToCopy *constraint.Set, replace ReplaceFunc) (theCopy *constraint.Set) {
+//	theCopy := constraint.Set{}
+//	theCopy.contradiction = itemToCopy.contradiction
+//	for i := 0; i < itemToCopy.Length(); i++ {
+//		constraint := theCopy.allocConstraint()
+//		constraint.Columns := itemToCopy.Constraint(i).Columns.RemapColumns(from, to opt.TableID)
+//
+//	}
+//}
 
 // RemapCols remaps columns IDs in the input ScalarExpr by replacing occurrences
 // of the keys of colMap with the corresponding values. If column IDs are
@@ -305,11 +318,90 @@ func (c *CustomFuncs) RemapCols(scalar opt.ScalarExpr, colMap opt.ColMap) opt.Sc
 				return e
 			}
 			return c.f.ConstructVariable(opt.ColumnID(dstCol))
+		case *memo.FiltersItem:
+			fromConstraints := t.ScalarProps().Constraints
+			newConstraints := constraint.Set{}
+
+			newFilters := &memo.FiltersItem{}
+			newFilters.Condition = t.Condition
+			if fromConstraints != nil {
+				newConstraints.AllocConstraint(fromConstraints.Length())
+				newFilters.ScalarProps().Constraints = &newConstraints
+				for i := 0; i < fromConstraints.Length(); i++ {
+					toConstraint := newConstraints.Constraint(i)
+					fromConstraint := fromConstraints.Constraint(i)
+					toConstraint.Spans = fromConstraint.Spans
+					fromColumns := fromConstraint.Columns
+					toConstraint.Columns = fromColumns.RemapColumnsWithColMap(colMap)
+				}
+			}
+			return newFilters
+		case *memo.FiltersExpr:
+			return c.copyReplaceFiltersExpr(t, replace)
 		}
 		return c.f.Replace(e, replace)
 	}
 
 	return replace(scalar).(opt.ScalarExpr)
+}
+
+func (c *CustomFuncs) copyReplaceFiltersExpr(
+	filters *memo.FiltersExpr, replace ReplaceFunc,
+) (_ *memo.FiltersExpr) {
+	list := *filters
+	var newList memo.FiltersExpr
+	for i := range list {
+		before := list[i].Condition
+		after := replace(before).(opt.ScalarExpr)
+		if before != after {
+			if newList == nil {
+				newList = make([]memo.FiltersItem, len(list))
+				copy(newList, list[:i])
+			}
+			newList[i] = CopyConstructFiltersItem(after, list[i], replace)
+		} else if newList != nil {
+			newList[i] = list[i]
+		}
+	}
+	if newList == nil {
+		return filters
+	}
+	return &newList
+}
+
+func CopyConstructFiltersItem(
+	condition opt.ScalarExpr, fromFilter memo.FiltersItem, replace ReplaceFunc,
+) memo.FiltersItem {
+	// Remap Column IDs in the Constraints
+	item := replace(&fromFilter).(*memo.FiltersItem)
+	item.Condition = condition
+
+	CopyScalarProps(item.ScalarProps(), fromFilter.ScalarProps(), replace)
+
+	//item.PopulateProps(_f.mem)  // msirek-temp
+	return *item
+}
+
+func CopyScalarProps(toProps *props.Scalar, fromProps *props.Scalar, replace ReplaceFunc) bool {
+	if !fromProps.Constraints.Immutable() {
+		return false
+	}
+	// Shared Properties
+	toProps.HasSubquery = fromProps.HasSubquery
+	toProps.HasCorrelatedSubquery = fromProps.HasCorrelatedSubquery
+	toProps.VolatilitySet = fromProps.VolatilitySet
+	toProps.CanMutate = fromProps.CanMutate
+	toProps.HasPlaceholder = fromProps.HasPlaceholder
+	toProps.OuterCols = fromProps.OuterCols
+	toProps.HasPlaceholder = fromProps.HasPlaceholder
+	// toProps.Rule.WithUses is lazily populated later on, if required, and the
+	// copy would have different WithIDs, so we intentionally do not copy it.
+
+	// Scalar Properties
+	toProps.TightConstraints = fromProps.TightConstraints
+
+	return true
+
 }
 
 // ----------------------------------------------------------------------
