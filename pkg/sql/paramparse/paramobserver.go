@@ -145,7 +145,7 @@ func intFromDatum(evalCtx *tree.EvalContext, key string, datum tree.Datum) (int6
 	intDatum := datum
 	if stringVal, err := DatumAsString(evalCtx, key, datum); err == nil {
 		if intDatum, err = tree.ParseDInt(stringVal); err != nil {
-			return 0, errors.Wrapf(err, "invalid value for %s", key)
+			return 0, errors.Wrapf(err, "invalid integer value for %s", key)
 		}
 	}
 	s, err := DatumAsInt(evalCtx, key, intDatum)
@@ -159,7 +159,7 @@ func floatFromDatum(evalCtx *tree.EvalContext, key string, datum tree.Datum) (fl
 	floatDatum := datum
 	if stringVal, err := DatumAsString(evalCtx, key, datum); err == nil {
 		if floatDatum, err = tree.ParseDFloat(stringVal); err != nil {
-			return 0, errors.Wrapf(err, "invalid value for %s", key)
+			return 0, errors.Wrapf(err, "invalid float value for %s", key)
 		}
 	}
 	s, err := DatumAsFloat(evalCtx, key, floatDatum)
@@ -698,7 +698,7 @@ func setIntValue(
 		return errors.Newf("unable to set table setting %s", settingName)
 	}
 	if err := validateFunc(intVal); err != nil {
-		return errors.Wrapf(err, "invalid value for %s", settingName)
+		return errors.Wrapf(err, "invalid integer value for %s", settingName)
 	}
 	// settingHolder is the memory address holding the *int64 setting.
 	var settingHolder **int64
@@ -739,7 +739,7 @@ func setFloatValue(
 		return errors.Newf("unable to set table setting %s", settingName)
 	}
 	if err := validateFunc(floatVal); err != nil {
-		return errors.Wrapf(err, "invalid value for %s", settingName)
+		return errors.Wrapf(err, "invalid float value for %s", settingName)
 	}
 	// settingHolder is the memory address holding the *float64 setting.
 	var settingHolder **float64

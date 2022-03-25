@@ -2604,22 +2604,43 @@ func (desc *wrapper) GetMultiRegionEnumDependencyIfExists() bool {
 
 // NoClusterSettingOverrides implements the TableDescriptor interface.
 func (desc *wrapper) NoClusterSettingOverrides() bool {
-	return desc.TableDesc().NoClusterSettingOverrides()
+	return desc.ClusterSettingsForTable == nil
 }
 
 // AutoStatsCollectionEnabled implements the TableDescriptor interface.
 func (desc *wrapper) AutoStatsCollectionEnabled() cluster.BoolSetting {
-	return desc.TableDesc().AutoStatsCollectionEnabled()
+	if desc.NoClusterSettingOverrides() {
+		return cluster.NotSet
+	}
+	if desc.ClusterSettingsForTable.SqlStatsAutomaticCollectionEnabled == nil {
+		return cluster.NotSet
+	}
+	if *desc.ClusterSettingsForTable.SqlStatsAutomaticCollectionEnabled {
+		return cluster.True
+	}
+	return cluster.False
 }
 
 // AutoStatsMinStaleRows implements the TableDescriptor interface.
 func (desc *wrapper) AutoStatsMinStaleRows() (minStaleRows int64, ok bool) {
-	return desc.TableDesc().AutoStatsMinStaleRows()
+	if desc.NoClusterSettingOverrides() {
+		return 0, false
+	}
+	if desc.ClusterSettingsForTable.SqlStatsAutomaticCollectionMinStaleRows == nil {
+		return 0, false
+	}
+	return *desc.ClusterSettingsForTable.SqlStatsAutomaticCollectionMinStaleRows, true
 }
 
 // AutoStatsFractionStaleRows implements the TableDescriptor interface.
 func (desc *wrapper) AutoStatsFractionStaleRows() (fractionStaleRows float64, ok bool) {
-	return desc.TableDesc().AutoStatsFractionStaleRows()
+	if desc.NoClusterSettingOverrides() {
+		return 0, false
+	}
+	if desc.ClusterSettingsForTable.SqlStatsAutomaticCollectionFractionStaleRows == nil {
+		return 0, false
+	}
+	return *desc.ClusterSettingsForTable.SqlStatsAutomaticCollectionFractionStaleRows, true
 }
 
 // SetTableLocalityRegionalByTable sets the descriptor's locality config to

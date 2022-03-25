@@ -522,7 +522,7 @@ func (desc *wrapper) ValidateSelf(vea catalog.ValidationErrorAccumulator) {
 		}
 	}
 
-	desc.validateClusterSettingsForTable(vea.Report)
+	desc.validateClusterSettingsForTable(vea)
 
 	if desc.IsSequence() {
 		return
@@ -1508,58 +1508,61 @@ func (desc *wrapper) validatePartitioning() error {
 
 // validateClusterSettingsForTable validates that any new cluster settings at
 // the table level hold a valid value.
-func (desc *wrapper) validateClusterSettingsForTable(errReportFn func(err error)) {
+func (desc *wrapper) validateClusterSettingsForTable(vea catalog.ValidationErrorAccumulator) {
 	if desc.NoClusterSettingOverrides() {
 		return
 	}
-	desc.validateBoolSetting(errReportFn, desc.ClusterSettingsForTable.SqlStatsAutomaticCollectionEnabled,
+	desc.validateBoolSetting(vea, desc.ClusterSettingsForTable.SqlStatsAutomaticCollectionEnabled,
 		cluster.AutoStatsEnabledSettingName)
-	desc.validateIntSetting(errReportFn, desc.ClusterSettingsForTable.SqlStatsAutomaticCollectionMinStaleRows,
+	desc.validateIntSetting(vea, desc.ClusterSettingsForTable.SqlStatsAutomaticCollectionMinStaleRows,
 		cluster.AutoStatsMinStaleSettingName, settings.NonNegativeInt)
-	desc.validateFloatSetting(errReportFn, desc.ClusterSettingsForTable.SqlStatsAutomaticCollectionFractionStaleRows,
+	desc.validateFloatSetting(vea, desc.ClusterSettingsForTable.SqlStatsAutomaticCollectionFractionStaleRows,
 		cluster.AutoStatsFractionStaleSettingName, settings.NonNegativeFloat)
 }
 
 func (desc *wrapper) verifyProperTableForStatsSetting(
-	errReportFn func(err error), settingName string,
+	vea catalog.ValidationErrorAccumulator, settingName string,
 ) {
 	if desc.IsVirtualTable() {
-		errReportFn(errors.Newf("Setting %s may not be set on virtual table", settingName))
+		vea.Report(errors.Newf("Setting %s may not be set on virtual table", settingName))
 	}
 	if !desc.IsTable() {
-		errReportFn(errors.Newf("Setting %s may not be set on a view or sequence", settingName))
+		vea.Report(errors.Newf("Setting %s may not be set on a view or sequence", settingName))
 	}
 }
 
 func (desc *wrapper) validateBoolSetting(
-	errReportFn func(err error), value *bool, settingName string,
+	vea catalog.ValidationErrorAccumulator, value *bool, settingName string,
 ) {
 	if value != nil {
-		desc.verifyProperTableForStatsSetting(errReportFn, settingName)
+		desc.verifyProperTableForStatsSetting(vea, settingName)
 	}
 }
 
 func (desc *wrapper) validateIntSetting(
-	errReportFn func(err error), value *int64, settingName string, validateFunc func(v int64) error,
+	vea catalog.ValidationErrorAccumulator,
+	value *int64,
+	settingName string,
+	validateFunc func(v int64) error,
 ) {
 	if value != nil {
-		desc.verifyProperTableForStatsSetting(errReportFn, settingName)
+		desc.verifyProperTableForStatsSetting(vea, settingName)
 		if err := validateFunc(*value); err != nil {
-			errReportFn(errors.Wrapf(err, "invalid value for %s", settingName))
+			vea.Report(errors.Wrapf(err, "invalid integer value for %s", settingName))
 		}
 	}
 }
 
 func (desc *wrapper) validateFloatSetting(
-	errReportFn func(err error),
+	vea catalog.ValidationErrorAccumulator,
 	value *float64,
 	settingName string,
 	validateFunc func(v float64) error,
 ) {
 	if value != nil {
-		desc.verifyProperTableForStatsSetting(errReportFn, settingName)
+		desc.verifyProperTableForStatsSetting(vea, settingName)
 		if err := validateFunc(*value); err != nil {
-			errReportFn(errors.Wrapf(err, "invalid value for %s", settingName))
+			vea.Report(errors.Wrapf(err, "invalid float value for %s", settingName))
 		}
 	}
 }

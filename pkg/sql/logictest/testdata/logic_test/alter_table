@@ -2442,10 +2442,10 @@ WHERE
 ----
 {}
 
-statement error pq: invalid value for sql.stats.automatic_collection.fraction_stale_rows: could not parse "hello" as type float: strconv.ParseFloat: parsing "hello": invalid syntax
+statement error pq: invalid float value for sql.stats.automatic_collection.fraction_stale_rows: could not parse "hello" as type float: strconv.ParseFloat: parsing "hello": invalid syntax
 ALTER TABLE t5 SET ("sql.stats.automatic_collection.fraction_stale_rows" = 'hello')
 
-statement error pq: invalid value for sql.stats.automatic_collection.min_stale_rows: could not parse "world" as type int: strconv.ParseInt: parsing "world": invalid syntax
+statement error pq: invalid integer value for sql.stats.automatic_collection.min_stale_rows: could not parse "world" as type int: strconv.ParseInt: parsing "world": invalid syntax
 ALTER TABLE t5 SET ("sql.stats.automatic_collection.min_stale_rows" = 'world')
 
 # Verify strings can be converted to proper setting values.

@@ -936,3 +936,9 @@ CREATE TABLE public.t11 (
   rowid INT8 NOT VISIBLE NOT NULL DEFAULT unique_rowid(),
   CONSTRAINT t11_pkey PRIMARY KEY (rowid ASC)
 ) WITH ("sql.stats.automatic_collection.enabled" = true, "sql.stats.automatic_collection.min_stale_rows" = 9223372036854775807, "sql.stats.automatic_collection.fraction_stale_rows" = 1.7976931348623157e+308)
+
+statement error pq: invalid float value for sql.stats.automatic_collection.fraction_stale_rows: cannot set to a negative value: -1.000000
+CREATE TABLE t22 (a int) WITH ("sql.stats.automatic_collection.fraction_stale_rows" = -1.0)
+
+statement error pq: invalid integer value for sql.stats.automatic_collection.min_stale_rows: cannot be set to a negative value: -1
+CREATE TABLE t22 (a int) WITH ("sql.stats.automatic_collection.min_stale_rows" = -1)

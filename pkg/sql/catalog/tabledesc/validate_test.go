@@ -1952,7 +1952,7 @@ func TestValidateTableDesc(t *testing.T) {
 				ClusterSettingsForTable: &catpb.ClusterSettingsForTable{SqlStatsAutomaticCollectionEnabled: &boolTrue},
 			},
 		},
-		{`invalid value for sql.stats.automatic_collection.min_stale_rows: cannot be set to a negative value: -1`,
+		{`invalid integer value for sql.stats.automatic_collection.min_stale_rows: cannot be set to a negative value: -1`,
 			descpb.TableDescriptor{
 				ID:            2,
 				ParentID:      1,
@@ -1964,7 +1964,7 @@ func TestValidateTableDesc(t *testing.T) {
 				NextColumnID:            2,
 				ClusterSettingsForTable: &catpb.ClusterSettingsForTable{SqlStatsAutomaticCollectionMinStaleRows: &negativeOne},
 			}},
-		{`invalid value for sql.stats.automatic_collection.fraction_stale_rows: cannot set to a negative value: -1.000000`,
+		{`invalid float value for sql.stats.automatic_collection.fraction_stale_rows: cannot set to a negative value: -1.000000`,
 			descpb.TableDescriptor{
 				ID:            2,
 				ParentID:      1,
