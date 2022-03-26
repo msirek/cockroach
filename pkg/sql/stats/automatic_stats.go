@@ -249,21 +249,42 @@ func (r *Refresher) getNumTablesEnsured() int {
 	return r.numTablesEnsured
 }
 
-func (r *Refresher) getTableDescriptor(
-	ctx context.Context, tableID descpb.ID,
-) (catalog.TableDescriptor, error) {
-	var desc catalog.TableDescriptor
+func (r *Refresher) getTableDescriptors(
+	ctx context.Context, tableIDs []descpb.ID,
+) []catalog.Descriptor {
+	if len(tableIDs) == 0 {
+		return nil
+	}
+	var tabDescriptors []catalog.Descriptor
+	flags := tree.CommonLookupFlags{Required: true}
+
 	if err := r.cache.collectionFactory.Txn(ctx, r.cache.SQLExecutor, r.cache.ClientDB, func(
 		ctx context.Context, txn *kv.Txn, descriptors *descs.Collection,
 	) (err error) {
-		desc, err = descriptors.GetImmutableTableByID(ctx, txn, tableID, tree.ObjectLookupFlagsWithRequired())
+		tabDescriptors, err = descriptors.GetImmutableDescriptorsByID(ctx, txn, flags, tableIDs...)
+		if err != nil {
+			var desc catalog.Descriptor
+			tabDescriptors = make([]catalog.Descriptor, 0, len(tableIDs))
+			var err2 error
+			flags2 := tree.ObjectLookupFlagsWithRequired()
+			for _, tableID := range tableIDs {
+				if desc, err2 = descriptors.GetImmutableTableByID(ctx, txn, tableID, flags2); err2 != nil {
+					newError := errors.Wrapf(err2,
+						"failed to get table descriptor for automatic stats on table id: %d", tableID)
+					// Wrap all of the errors together, to report later. We want to
+					// minimize the time spent in this transaction, so aren't logging them
+					// here.
+					err = errors.Wrap(err, newError.Error())
+				} else {
+					tabDescriptors = append(tabDescriptors, desc)
+				}
+			}
+		}
 		return err
 	}); err != nil {
-		log.Errorf(ctx, "%v",
-			errors.Wrapf(err, "failed to get table descriptor for automatic stats on table id: %d", tableID))
-		return nil, err
+		log.Errorf(ctx, "%v", err)
 	}
-	return desc, nil
+	return tabDescriptors
 }
 
 func (r *Refresher) autoStatsEnabled(desc catalog.TableDescriptor) bool {
@@ -292,6 +313,46 @@ func (r *Refresher) autoStatsFractionStaleRows(desc catalog.TableDescriptor) flo
 		return fractionStaleRows
 	}
 	return AutomaticStatisticsFractionStaleRows.Get(&r.st.SV)
+}
+
+// handleTables processes auto stats collection for a slice of tableIDs.
+// Returns true if the caller should quiesce immediately.
+func (r *Refresher) handleTables(
+	ctx context.Context,
+	tableIDs []descpb.ID,
+	mutationCounts map[descpb.ID]int64,
+	stopper *stop.Stopper,
+) (shouldQuiesce bool) {
+	var ok bool
+	var rowsAffected int64
+	var tabDesc catalog.TableDescriptor
+
+	descriptors := r.getTableDescriptors(ctx, tableIDs)
+	for _, desc := range descriptors {
+		if tabDesc, ok = convertToTableDescriptor(ctx, desc); !ok {
+			continue
+		}
+		// Check the cluster setting and table setting before each refresh
+		// in case they were disabled recently.
+		if !r.autoStatsEnabled(tabDesc) {
+			continue
+		}
+		if rowsAffected, ok = mutationCounts[tabDesc.GetID()]; !ok {
+			log.Errorf(ctx, "autostats could not find rowsAffected for table id: %d",
+				desc.GetID())
+		}
+
+		r.maybeRefreshStats(ctx, stopper, tabDesc, rowsAffected, r.asOfTime)
+
+		select {
+		case <-stopper.ShouldQuiesce():
+			// Don't bother trying to refresh the remaining tables if we
+			// are shutting down.
+			return true
+		default:
+		}
+	}
+	return false
 }
 
 // Start starts the stats refresher thread, which polls for messages about
@@ -337,32 +398,26 @@ func (r *Refresher) Start(
 							return
 						}
 
-						for tableID, rowsAffected := range mutationCounts {
-							// Check the cluster setting and table setting before each refresh
-							// in case they were disabled recently.
-							var desc catalog.TableDescriptor
-							var err error
-							if desc, err = r.getTableDescriptor(ctx, tableID); err != nil {
-								// The error was already logged inside getTableDescriptor. We
-								// have to skip this table so we don't inadvertently collect
-								// stats on a table that has auto stats collection disabled.
+						var tableIDs []descpb.ID
+						const mutationChunkSize = 1000
+
+						for tableID := range mutationCounts {
+							// Break the mutations up into smaller chunks
+							if len(tableIDs) < mutationChunkSize {
+								tableIDs = append(tableIDs, tableID)
 								continue
 							}
-							if !r.autoStatsEnabled(desc) {
-								// Table-level or cluster setting disables auto stats,
-								// so skip this table.
-								continue
-							}
-
-							r.maybeRefreshStats(ctx, stopper, desc, rowsAffected, r.asOfTime)
-
-							select {
-							case <-stopper.ShouldQuiesce():
-								// Don't bother trying to refresh the remaining tables if we
-								// are shutting down.
+							quiesceNow := r.handleTables(ctx, tableIDs, mutationCounts, stopper)
+							if quiesceNow {
 								return
-							default:
 							}
+							// Reset, so we'll process a new list of tables on the next pass.
+							tableIDs = nil
+						}
+						// Process any remaining tableIDs
+						quiesceNow := r.handleTables(ctx, tableIDs, mutationCounts, stopper)
+						if quiesceNow {
+							return
 						}
 						timer.Reset(refreshInterval)
 					}); err != nil {
@@ -382,6 +437,20 @@ func (r *Refresher) Start(
 		}
 	})
 	return nil
+}
+
+func convertToTableDescriptor(
+	ctx context.Context, desc catalog.Descriptor,
+) (tabDesc catalog.TableDescriptor, ok bool) {
+	var err error
+	tabDesc, err = catalog.AsTableDescriptor(desc)
+	if err != nil {
+		newErr := errors.Wrapf(err,
+			"unexpected descriptor kind in automatic stats for object id: %d", desc.GetID())
+		log.Errorf(ctx, "%v", newErr)
+		return nil, false
+	}
+	return tabDesc, true
 }
 
 const (
