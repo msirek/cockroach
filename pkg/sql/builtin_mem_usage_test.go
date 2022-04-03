@@ -46,13 +46,13 @@ const numRows = 9
 func createTableWithLongStrings(sqlDB *gosql.DB) error {
 	if _, err := sqlDB.Exec(`
 CREATE DATABASE d;
-CREATE TABLE d.t (a STRING, b STRING, c INT)
+CREATE TABLE d.t (a STRING, b STRING, k INT, c int, v int, d decimal, primary key(k))
 `); err != nil {
 		return err
 	}
 
 	for i := 0; i < numRows; i++ {
-		if _, err := sqlDB.Exec(`INSERT INTO d.t VALUES (repeat('a', $1), repeat('b', $1), $2)`, rowSize, i%3); err != nil {
+		if _, err := sqlDB.Exec(`INSERT INTO d.t VALUES (repeat('a', $1), repeat('b', $1), $2, $3, $3, $4)`, rowSize, i, i%3, i%4); err != nil {
 			return err
 		}
 	}
@@ -103,7 +103,8 @@ func TestAggregatesMonitorMemory2(t *testing.T) {
 	// besides the aggregate itself from being able to catch the
 	// large memory usage.
 	statements := []string{
-		`SELECT  array_agg(a), json_agg(B), concat_agg(B) OVER w, json_agg(A)  FROM d.t group by c, b WINDOW w AS (PARTITION BY B)`,
+		`SELECT stddev(d) OVER w, json_agg(a), concat_agg(b) OVER w FROM d.t group by v, d, a, b WINDOW w as (PARTITION BY v) ORDER BY variance(d) OVER w`,
+		//`SELECT  array_agg(a), json_agg(B), concat_agg(B) OVER w, json_agg(A)  FROM d.t group by c, b WINDOW w AS (PARTITION BY B)`,
 	}
 
 	for _, statement := range statements {
