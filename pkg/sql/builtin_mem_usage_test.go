@@ -33,26 +33,26 @@ const lowMemoryBudget = 1 << 20 /* 1MiB */
 
 // rowSize is the length of the string present in each row of the table created
 // by createTableWithLongStrings.
-const rowSize = 30000
+const rowSize = 300
 
 // numRows is the number of rows to insert in createTableWithLongStrings.
 // numRows and rowSize were picked arbitrarily but so that rowSize * numRows >
 // lowMemoryBudget, so that aggregating them all in a CONCAT_AGG or
 // ARRAY_AGG will exhaust lowMemoryBudget.
-const numRows = 50
+const numRows = 9
 
 // createTableWithLongStrings creates a table with a modest number of long strings,
 // with the intention of using them to exhaust a memory budget.
 func createTableWithLongStrings(sqlDB *gosql.DB) error {
 	if _, err := sqlDB.Exec(`
 CREATE DATABASE d;
-CREATE TABLE d.t (a STRING)
+CREATE TABLE d.t (a STRING, b STRING, c INT)
 `); err != nil {
 		return err
 	}
 
 	for i := 0; i < numRows; i++ {
-		if _, err := sqlDB.Exec(`INSERT INTO d.t VALUES (repeat('a', $1))`, rowSize); err != nil {
+		if _, err := sqlDB.Exec(`INSERT INTO d.t VALUES (repeat('a', $1), repeat('b', $1), $2)`, rowSize, i%3); err != nil {
 			return err
 		}
 	}
@@ -72,6 +72,38 @@ func TestAggregatesMonitorMemory(t *testing.T) {
 		`SELECT length(concat_agg(a)) FROM d.t`,
 		`SELECT array_length(array_agg(a), 1) FROM d.t`,
 		`SELECT json_typeof(json_agg(A)) FROM d.t`,
+	}
+
+	for _, statement := range statements {
+		s, sqlDB, _ := serverutils.StartServer(t, base.TestServerArgs{
+			SQLMemoryPoolSize: lowMemoryBudget,
+		})
+
+		defer s.Stopper().Stop(context.Background())
+
+		if err := createTableWithLongStrings(sqlDB); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := sqlDB.Exec(statement)
+
+		if pqErr := (*pq.Error)(nil); !errors.As(err, &pqErr) || pgcode.MakeCode(string(pqErr.Code)) != pgcode.OutOfMemory {
+			t.Fatalf("Expected \"%s\" to consume too much memory", statement)
+		}
+	}
+}
+
+// TestConcatAggMonitorsMemory verifies that the aggregates incrementally
+// record their memory usage as they build up their result.
+func TestAggregatesMonitorMemory2(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	// By avoiding printing the aggregate results we prevent anything
+	// besides the aggregate itself from being able to catch the
+	// large memory usage.
+	statements := []string{
+		`SELECT  array_agg(a), json_agg(B), concat_agg(B) OVER w, json_agg(A)  FROM d.t group by c, b WINDOW w AS (PARTITION BY B)`,
 	}
 
 	for _, statement := range statements {
