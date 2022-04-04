@@ -31,28 +31,53 @@ import (
 // extra space to overflow.
 const lowMemoryBudget = 1 << 20 /* 1MiB */
 
+const lowMemoryBudget2 = 1 << 20 /* 8MiB */
+
 // rowSize is the length of the string present in each row of the table created
 // by createTableWithLongStrings.
-const rowSize = 300
+const rowSize = 30000
 
 // numRows is the number of rows to insert in createTableWithLongStrings.
 // numRows and rowSize were picked arbitrarily but so that rowSize * numRows >
 // lowMemoryBudget, so that aggregating them all in a CONCAT_AGG or
 // ARRAY_AGG will exhaust lowMemoryBudget.
-const numRows = 9
+const numRows = 50
+
+// rowSize is the length of the string present in each row of the table created
+// by createTableWithMixedTypes.
+const rowSize2 = 3000
+
+// numRows is the number of rows to insert in createTableWithMixedTypes.
+const numRows2 = 15
 
 // createTableWithLongStrings creates a table with a modest number of long strings,
 // with the intention of using them to exhaust a memory budget.
 func createTableWithLongStrings(sqlDB *gosql.DB) error {
 	if _, err := sqlDB.Exec(`
 CREATE DATABASE d;
-CREATE TABLE d.t (a STRING, b STRING, k INT, c int, v int, d decimal, primary key(k))
+CREATE TABLE d.t (a STRING)
 `); err != nil {
 		return err
 	}
 
 	for i := 0; i < numRows; i++ {
-		if _, err := sqlDB.Exec(`INSERT INTO d.t VALUES (repeat('a', $1), repeat('b', $1), $2, $3, $3, $4)`, rowSize, i, i%3, i%4); err != nil {
+		if _, err := sqlDB.Exec(`INSERT INTO d.t VALUES (repeat('a', $1))`, rowSize); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func createTableWithMixedTypes(sqlDB *gosql.DB) error {
+	if _, err := sqlDB.Exec(`
+CREATE DATABASE d;
+CREATE TABLE d.tt (a STRING, b STRING, k INT, c int, v int, d decimal, primary key(k))
+`); err != nil {
+		return err
+	}
+
+	for i := 0; i < numRows2; i++ {
+		if _, err := sqlDB.Exec(`INSERT INTO d.tt VALUES (repeat('a', $1), repeat('b', $1), $2, $3, $3, $4)`, rowSize2, i, i%3, i%4); err != nil {
 			return err
 		}
 	}
@@ -93,35 +118,32 @@ func TestAggregatesMonitorMemory(t *testing.T) {
 	}
 }
 
-// TestConcatAggMonitorsMemory verifies that the aggregates incrementally
-// record their memory usage as they build up their result.
+// TestConcatAggMonitorsMemory2 verifies that memory accounting for aggregates
+// never tries to grow an account by a negative amount, resuling in
+// reservedbytes not being returned to the pool.
 func TestAggregatesMonitorMemory2(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
-	// By avoiding printing the aggregate results we prevent anything
-	// besides the aggregate itself from being able to catch the
-	// large memory usage.
 	statements := []string{
-		`SELECT stddev(d) OVER w, json_agg(a), concat_agg(b) OVER w FROM d.t group by v, d, a, b WINDOW w as (PARTITION BY v) ORDER BY variance(d) OVER w`,
+		`SELECT stddev(d) OVER w, json_agg(a), concat_agg(b) OVER w FROM d.tt 
+			GROUP BY v, d, a, b WINDOW w AS (PARTITION BY v) ORDER BY variance(d) OVER w`,
 		//`SELECT  array_agg(a), json_agg(B), concat_agg(B) OVER w, json_agg(A)  FROM d.t group by c, b WINDOW w AS (PARTITION BY B)`,
 	}
 
 	for _, statement := range statements {
 		s, sqlDB, _ := serverutils.StartServer(t, base.TestServerArgs{
-			SQLMemoryPoolSize: lowMemoryBudget,
+			SQLMemoryPoolSize: lowMemoryBudget2,
 		})
 
 		defer s.Stopper().Stop(context.Background())
 
-		if err := createTableWithLongStrings(sqlDB); err != nil {
+		if err := createTableWithMixedTypes(sqlDB); err != nil {
 			t.Fatal(err)
 		}
 
-		_, err := sqlDB.Exec(statement)
-
-		if pqErr := (*pq.Error)(nil); !errors.As(err, &pqErr) || pgcode.MakeCode(string(pqErr.Code)) != pgcode.OutOfMemory {
-			t.Fatalf("Expected \"%s\" to consume too much memory", statement)
+		if _, err := sqlDB.Exec(statement); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

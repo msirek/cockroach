@@ -1356,7 +1356,8 @@ func makeSingleDatumAggregateBase(evalCtx *tree.EvalContext) singleDatumAggregat
 // the account is updated only by the delta between previous and new usages,
 // otherwise, it is grown by newUsage.
 func (b *singleDatumAggregateBase) updateMemoryUsage(ctx context.Context, newUsage int64) error {
-	if err := b.acc.Grow(ctx, newUsage-b.accountedFor); err != nil {
+	//if err := b.acc.Grow(ctx, newUsage-b.accountedFor); err != nil { // msirek-temp
+	if err := b.acc.Resize(ctx, b.accountedFor, newUsage); err != nil {
 		return err
 	}
 	b.accountedFor = newUsage
@@ -1370,6 +1371,7 @@ func (b *singleDatumAggregateBase) reset(ctx context.Context) {
 		b.accountedFor = 0
 	case nonSharedSingleDatumAggregateBaseMode:
 		b.acc.Clear(ctx)
+		b.accountedFor = 0 // msirek-temp
 	default:
 		panic(errors.Errorf("unexpected singleDatumAggregateBaseMode: %d", b.mode))
 	}
@@ -1382,6 +1384,7 @@ func (b *singleDatumAggregateBase) close(ctx context.Context) {
 		b.accountedFor = 0
 	case nonSharedSingleDatumAggregateBaseMode:
 		b.acc.Close(ctx)
+		b.accountedFor = 0 // msirek-temp
 	default:
 		panic(errors.Errorf("unexpected singleDatumAggregateBaseMode: %d", b.mode))
 	}

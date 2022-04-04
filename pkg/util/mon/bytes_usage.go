@@ -240,7 +240,7 @@ type BytesMonitor struct {
 // not cause contention when accounts cause its allocation counter to grow and
 // shrink slightly beyond and beneath an allocation block boundary. The
 // difference is expressed as a number of blocks of size `poolAllocationSize`.
-var maxAllocatedButUnusedBlocks = envutil.EnvOrDefaultInt("COCKROACH_MAX_ALLOCATED_UNUSED_BLOCKS", 10)
+var maxAllocatedButUnusedBlocks = envutil.EnvOrDefaultInt("COCKROACH_MAX_ALLOCATED_UNUSED_BLOCKS", 10) // msirek-temp
 
 // DefaultPoolAllocationSize specifies the unit of allocation used by a monitor
 // to reserve and release bytes to a pool.
@@ -677,12 +677,16 @@ func (b *BoundAccount) ResizeTo(ctx context.Context, newSz int64) error {
 //
 // If Mu is set, it is safe for use by concurrent goroutines.
 func (b *BoundAccount) Grow(ctx context.Context, x int64) error {
-	if b == nil {
+	if b == nil || x == 0 {
 		return nil
 	}
 	if b.Mu != nil {
 		b.Mu.Lock()
 		defer b.Mu.Unlock()
+	}
+	if x < 0 {
+		i := 0
+		i++
 	}
 	if b.reserved < x {
 		minExtra := b.mon.roundSize(x - b.reserved)
@@ -700,7 +704,7 @@ func (b *BoundAccount) Grow(ctx context.Context, x int64) error {
 //
 // If Mu is set, it is safe for use by concurrent goroutines.
 func (b *BoundAccount) Shrink(ctx context.Context, delta int64) {
-	if b == nil {
+	if b == nil || delta == 0 {
 		return
 	}
 	if b.Mu != nil {
