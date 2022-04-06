@@ -27,7 +27,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 )
 
-func BenchmarkQoS(b *testing.B) {
+func BenchmarkQoS1(b *testing.B) {
 	defer leaktest.AfterTest(b)()
 	defer log.Scope(b).Close(b)
 	ctx := context.Background()
@@ -61,18 +61,32 @@ func BenchmarkQoS(b *testing.B) {
 			desctestutils.TestingGetPublicTableDescriptor(s.DB(), keys.SystemSQLCodec,
 				"t", fmt.Sprintf("a%d", i)))
 	}
+	const numStmts = 10
 
-	const numInsSels = 10
-	for i := 0; i < numInsSels; i++ {
+	var setStmt string
+	critical := false
+	if critical {
+		setStmt = `SET default_transaction_quality_of_service=critical; `
+	} else {
+		setStmt = `SET default_transaction_quality_of_service=background; `
+	}
+	sqlRun.Exec(b, fmt.Sprintf("%s %s", setStmt,
+		"insert into t.a3 select g from generate_series(1,100000) g(g);"))
+	for i := 0; i < numStmts; i++ {
 		go func() {
-			sqlRun.Exec(b,
-				`SET default_transaction_quality_of_service=critical;
-        insert into t.a1 select g from generate_series(1,100000) g(g);
-`)
+			//var explainText string
+			rows := sqlRun.Query(b, fmt.Sprintf("%s %s", setStmt,
+				`SELECT COUNT(*) FROM t.a3 a, t.a3 b, t.a3 c, t.a3 d WHERE a.k = b.k AND 
+					b.k = c.k and c.k = d.k;`))
+			defer rows.Close()
+			//for rows.Next() {
+			//	if err := rows.Scan(&explainText); err != nil {
+			//		b.Fatalf("Unexpected error: %v", err)
+			//	}
+			//	fmt.Println(explainText)
+			//}  // msirek-temp\
 		}()
 	}
-
-	// Run the operation 1000 times.
 	const numOps = 10
 	runBench1 := func(b *testing.B) {
 		b.ResetTimer()
@@ -91,8 +105,66 @@ func BenchmarkQoS(b *testing.B) {
 		}
 		b.StopTimer()
 	}
-	// This is the slower way to construct a copy of filters.
-	b.Run(`BenchmarkQoS`, func(b *testing.B) {
+
+	runBench2 := func(b *testing.B) {
+		b.ResetTimer()
+		b.StartTimer()
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < numOps; j++ {
+				sqlRun.Exec(b,
+					`SET default_transaction_quality_of_service=critical;
+        insert into t.a2 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+        insert into t.a3 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+        insert into t.a4 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+        insert into t.a5 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+        insert into t.a6 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+`)
+			}
+		}
+		b.StopTimer()
+	}
+
+	b.Run(`Bench1`, func(b *testing.B) {
 		runBench1(b)
+	})
+	b.Run(`Bench2`, func(b *testing.B) {
+		runBench2(b)
+	})
+
+	const setStmt3 = `SET default_transaction_quality_of_service=background; `
+	runBench3 := func(b *testing.B) {
+		b.ResetTimer()
+		b.StartTimer()
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < numOps; j++ {
+				rows := sqlRun.Query(b, fmt.Sprintf("%s %s", setStmt3,
+					`SELECT COUNT(*) FROM t.a3 a, t.a3 b, t.a3 c, t.a3 d WHERE a.k = b.k AND 
+					b.k = c.k and c.k = d.k;`))
+				defer rows.Close()
+			}
+		}
+		b.StopTimer()
+	}
+
+	const setStmt4 = `SET default_transaction_quality_of_service=critical; `
+	runBench4 := func(b *testing.B) {
+		b.ResetTimer()
+		b.StartTimer()
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < numOps; j++ {
+				rows := sqlRun.Query(b, fmt.Sprintf("%s %s", setStmt4,
+					`SELECT COUNT(*) FROM t.a3 a, t.a3 b, t.a3 c, t.a3 d WHERE a.k = b.k AND 
+					b.k = c.k and c.k = d.k;`))
+				defer rows.Close()
+			}
+		}
+		b.StopTimer()
+	}
+
+	b.Run(`Bench3`, func(b *testing.B) {
+		runBench3(b)
+	})
+	b.Run(`Bench4`, func(b *testing.B) {
+		runBench4(b)
 	})
 }
