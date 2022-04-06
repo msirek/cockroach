@@ -12,17 +12,17 @@ package sql
 
 import (
 	"context"
+	gosql "database/sql"
 	"fmt"
 	"testing"
 
 	"github.com/cockroachdb/cockroach/pkg/base"
-	"github.com/cockroachdb/cockroach/pkg/keys"
+	"github.com/cockroachdb/cockroach/pkg/server"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
-	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
-	"github.com/cockroachdb/cockroach/pkg/sql/catalog/desctestutils"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
+	"github.com/cockroachdb/cockroach/pkg/testutils/testcluster"
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 )
@@ -32,13 +32,31 @@ func BenchmarkQoS1(b *testing.B) {
 	defer log.Scope(b).Close(b)
 	ctx := context.Background()
 
-	s, sqlDB, _ := serverutils.StartServer(b, base.TestServerArgs{})
-	defer s.Stopper().Stop(ctx)
+	//s, sqlDB, _ := serverutils.StartServer(b, base.TestServerArgs{})
+	tc := testcluster.StartTestCluster(b, 1, base.TestClusterArgs{
+		ServerArgs: base.TestServerArgs{},
+	})
+	defer tc.Stopper().Stop(ctx)
 
 	st := cluster.MakeTestingClusterSettings()
 	evalCtx := tree.NewTestingEvalContext(st)
 	defer evalCtx.Stop(ctx)
+	sqlDB := tc.ServerConn(0)
 
+	gatewayServer := tc.Server(0 /* idx */).(*server.TestServer)
+	status := gatewayServer.status
+	const numStmts = 32
+	var sqlDBs []*gosql.DB
+	var sqlRunners []*sqlutils.SQLRunner
+	sqlDBs = make([]*gosql.DB, 0, numStmts)
+	sqlRunners = make([]*sqlutils.SQLRunner, 0, numStmts)
+
+	for i := 0; i < numStmts; i++ {
+		sqlDBs = append(sqlDBs, serverutils.OpenDBConn(
+			b, gatewayServer.ServingSQLAddr(), "" /* useDatabase */, true, /* insecure */
+			gatewayServer.Stopper()))
+		sqlRunners = append(sqlRunners, sqlutils.MakeSQLRunner(sqlDBs[i]))
+	}
 	sqlRun := sqlutils.MakeSQLRunner(sqlDB)
 	sqlRun.Exec(b,
 		`CREATE DATABASE t;
@@ -55,14 +73,6 @@ func BenchmarkQoS1(b *testing.B) {
 
 `)
 
-	tabDescrs := make([]catalog.TableDescriptor, 0, 10)
-	for i := 1; i <= 10; i++ {
-		tabDescrs = append(tabDescrs,
-			desctestutils.TestingGetPublicTableDescriptor(s.DB(), keys.SystemSQLCodec,
-				"t", fmt.Sprintf("a%d", i)))
-	}
-	const numStmts = 10
-
 	var setStmt string
 	critical := false
 	if critical {
@@ -70,12 +80,14 @@ func BenchmarkQoS1(b *testing.B) {
 	} else {
 		setStmt = `SET default_transaction_quality_of_service=background; `
 	}
-	sqlRun.Exec(b, fmt.Sprintf("%s %s", setStmt,
+	sqlRunners[0].Exec(b, fmt.Sprintf("%s %s", setStmt,
 		"insert into t.a3 select g from generate_series(1,100000) g(g);"))
+
 	for i := 0; i < numStmts; i++ {
 		go func() {
+			idx := i
 			//var explainText string
-			rows := sqlRun.Query(b, fmt.Sprintf("%s %s", setStmt,
+			rows := sqlRunners[idx].Query(b, fmt.Sprintf("%s %s", setStmt,
 				`SELECT COUNT(*) FROM t.a3 a, t.a3 b, t.a3 c, t.a3 d WHERE a.k = b.k AND 
 					b.k = c.k and c.k = d.k;`))
 			defer rows.Close()
@@ -87,6 +99,7 @@ func BenchmarkQoS1(b *testing.B) {
 			//}  // msirek-temp\
 		}()
 	}
+
 	const numOps = 10
 	runBench1 := func(b *testing.B) {
 		b.ResetTimer()
