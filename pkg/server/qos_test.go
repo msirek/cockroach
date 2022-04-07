@@ -14,9 +14,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/base"
+	"github.com/cockroachdb/cockroach/pkg/sql/sessiondatapb"
 	"github.com/cockroachdb/cockroach/pkg/sql/tests"
 	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
@@ -25,44 +25,68 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 )
 
-func startBackgroundSQL(
-	b *testing.B,
-	stopper *stop.Stopper,
-	gatewayServer *TestServer,
-	ctx context.Context,
-	setQoSStmt string,
-	queryStmt string,
-	numRuns int,
-) {
-	_ = stopper.RunAsyncTask(ctx, "Background Query", func(ctx context.Context) {
+type QoSUserLevel sessiondatapb.QoSLevel
+
+const (
+	Background = QoSUserLevel(sessiondatapb.UserLow)
+	Regular    = QoSUserLevel(sessiondatapb.Normal)
+	Critical   = QoSUserLevel(sessiondatapb.UserHigh)
+)
+
+var qosSetStmtDict = map[QoSUserLevel]string{
+	Background: `SET default_transaction_quality_of_service=background; `,
+	Regular:    `SET default_transaction_quality_of_service=regular; `,
+	Critical:   `SET default_transaction_quality_of_service=critical; `,
+}
+
+type qosBenchmarkParams struct {
+	stopper               *stop.Stopper
+	gatewayServer         *TestServer
+	ctx                   context.Context
+	sqlRun                *sqlutils.SQLRunner
+	backgroundSqlQoSLevel QoSUserLevel
+	backgroundSqlStmt     string
+	backgroundSqlNumRuns  int
+}
+
+func startBackgroundSQL(b *testing.B, params qosBenchmarkParams) {
+	_ = params.stopper.RunAsyncTask(params.ctx, "Background Query", func(ctx context.Context) {
 		sqlDB := serverutils.OpenDBConn(
-			b, gatewayServer.ServingSQLAddr(), "" /* useDatabase */, true, /* insecure */
-			stopper)
+			b, params.gatewayServer.ServingSQLAddr(), "" /* useDatabase */, true, /* insecure */
+			params.stopper)
 		defer sqlDB.Close()
 		sqlRunner := sqlutils.MakeSQLRunner(sqlDB)
-		for j := 0; j < numRuns; j++ {
+		for j := 0; j < params.backgroundSqlNumRuns; j++ {
 			select {
-			case <-stopper.ShouldQuiesce():
+			case <-params.stopper.ShouldQuiesce():
 				return
-			case <-stopper.IsStopped():
+			case <-params.stopper.IsStopped():
 				return
 			default:
 			}
-			sqlRunner.Exec(b, fmt.Sprintf("%s %s", setQoSStmt, queryStmt))
+			backgroundSqlSetQoSStmt, _ := qosSetStmtDict[params.backgroundSqlQoSLevel]
+			sqlRunner.Exec(b, fmt.Sprintf("%s %s", backgroundSqlSetQoSStmt, params.backgroundSqlStmt))
 		}
 	},
 	)
 }
 
 func benchQueryWithQoS(
-	numOps int, sqlRun *sqlutils.SQLRunner, setQoSStmt string, queryStmt string,
+	params qosBenchmarkParams, numOps int, qoSLevel QoSUserLevel, queryStmt string,
 ) func(b *testing.B) {
 	return func(b *testing.B) {
+		// Kick off some SQLs in asynchronous tasks for CPU contention.
+		for i := 0; i < params.backgroundSqlNumRuns; i++ {
+			startBackgroundSQL(b, params)
+		}
+		// Set the QoS level of the main SQL we're benchmarking.
+		setQoSStmt, _ := qosSetStmtDict[qoSLevel]
+		params.sqlRun.Exec(b, setQoSStmt)
 		b.ResetTimer()
 		b.StartTimer()
 		for i := 0; i < b.N; i++ {
 			for j := 0; j < numOps; j++ {
-				sqlRun.Exec(b, fmt.Sprintf("%s %s", setQoSStmt, queryStmt))
+				params.sqlRun.Exec(b, fmt.Sprintf("%s", queryStmt))
 			}
 		}
 		b.StopTimer()
@@ -74,36 +98,18 @@ func BenchmarkQoS1(b *testing.B) {
 	defer log.Scope(b).Close(b)
 	ctx := context.Background()
 
-	//s, sqlDB, _ := serverutils.StartServer(b, base.TestServerArgs{})
-	//tc := testcluster.StartTestCluster(b, 1, base.TestClusterArgs{
-	//	ServerArgs: base.TestServerArgs{},
-	//})
 	params, _ := tests.CreateTestServerParams()
 	params.Insecure = true
 	params.SQLMemoryPoolSize = 8 << 30
 	tc := serverutils.StartNewTestCluster(b, 1, /* numNodes */
 		base.TestClusterArgs{ServerArgs: params})
 	defer tc.Stopper().Stop(ctx)
-
-	//st := cluster.MakeTestingClusterSettings()
-	//evalCtx := tree.NewTestingEvalContext(st)
-	//defer evalCtx.Stop(ctx)
 	sqlDB := tc.ServerConn(0)
-
 	gatewayServer := tc.Server(0 /* idx */).(*TestServer)
-
-	//var sqlDBs []*gosql.DB
-	//var sqlRunners []*sqlutils.SQLRunner
-	//sqlDBs = make([]*gosql.DB, 0, numStmts)
-	//sqlRunners = make([]*sqlutils.SQLRunner, 0, numStmts)
-	//
-	//for i := 0; i < numStmts; i++ {
-	//	sqlDBs = append(sqlDBs, serverutils.OpenDBConn(
-	//		b, gatewayServer.ServingSQLAddr(), "" /* useDatabase */, true, /* insecure */
-	//		gatewayServer.Stopper()))
-	//	sqlRunners = append(sqlRunners, sqlutils.MakeSQLRunner(sqlDBs[i]))
-	//}
 	sqlRun := sqlutils.MakeSQLRunner(sqlDB)
+	// Create some tables. Specific below in the `tableName` const the table to
+	// use for the specific benchmark run.
+	//
 	sqlRun.Exec(b,
 		`CREATE DATABASE t;
         CREATE TABLE t.a1 (k INT PRIMARY KEY USING HASH WITH BUCKET_COUNT = 256, v CHAR(30000));
@@ -118,87 +124,55 @@ func BenchmarkQoS1(b *testing.B) {
         CREATE TABLE t.a10 (k INT);
 
 `)
-
-	var setQoSStmt string
-	critical := false
-	if critical {
-		setQoSStmt = `SET default_transaction_quality_of_service=regular; `
-	} else {
-		setQoSStmt = `SET default_transaction_quality_of_service=background; `
-	}
 	const tableName = `t.a1`
-	insSelStmt := fmt.Sprintf(`insert into %s select g, 'foo' from generate_series(1,100000) g(g);`, tableName)
-	sqlRun.Exec(b, fmt.Sprintf("%s %s", setQoSStmt, insSelStmt))
 
-	////go func() {
-	//for i := 0; i < numStmts; i++ {
-	//	//var explainText string
-	//	sqlRunners[i].Exec(b, fmt.Sprintf("%s %s", setStmt,
-	//		`INSERT INTO t.a10 SELECT COUNT(*) FROM t.a3 a, t.a3 b, t.a3 c, t.a3 d WHERE a.k = b.k AND
-	//				b.k = c.k and c.k = d.k;`))
-	//	// defer rows.Close()
-	//	//for rows.Next() {
-	//	//	if err := rows.Scan(&explainText); err != nil {
-	//	//		b.Fatalf("Unexpected error: %v", err)
-	//	//	}
-	//	//	fmt.Println(explainText)
-	//	//}  // msirek-temp\
-	//}
-	////}()
+	insSelStmt := fmt.Sprintf(`insert into %s select g, 'foo' from generate_series(1,500000) g(g);`, tableName)
+	sqlRun.Exec(b, insSelStmt)
+
 	olapQueryStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s a, %s b, %s c, %s d WHERE a.k = b.k AND 
                     b.k = c.k and c.k = d.k;`, tableName, tableName, tableName, tableName)
-	//olapQueryStmt2 := fmt.Sprintf(`SELECT COUNT(*) FROM %s a;`, tableName)
+	olapQueryStmt2 := fmt.Sprintf(`SELECT COUNT(*) FROM %s a;`, tableName)
 	stopper := tc.Stopper()
-	// Start a bunch of asynchronous SQLs to provide workload contention with
-	// our benchmark queries.
-	const numStmts = 32
-	for i := 0; i < numStmts; i++ {
-		startBackgroundSQL(
-			b, stopper, gatewayServer, ctx, setQoSStmt, olapQueryStmt, 3)
-	}
-	// Make sure the background queries have started.
-	time.Sleep(10 * time.Millisecond)
-	const setBackgroundQoSStmt = `SET default_transaction_quality_of_service=background;`
-	const setCriticalQoSStmt = `SET default_transaction_quality_of_service=critical;`
 
-	const numOps = 10
+	benchParams := qosBenchmarkParams{
+		stopper:               stopper,
+		gatewayServer:         gatewayServer,
+		ctx:                   ctx,
+		sqlRun:                sqlRun,         // Runner to use for the main SQL
+		backgroundSqlQoSLevel: Regular,        // CHANGE THIS and compare runtimes
+		backgroundSqlStmt:     olapQueryStmt2, // The specific background SQL to run
+		backgroundSqlNumRuns:  1,              // Adjusts the CPU contention
+	}
+
+	// CHANGE THIS along with backgroundSqlQoSLevel for comparative benchmarking.
+	// Valid levels: Background, Regular, Critical
+	const qosLevel = Regular
+
+	// Change numOps to see if issuing many statements in a tight loop matters.
+	const numOps = 1
 	const insStmt = `insert into t.a2 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
         insert into t.a3 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
         insert into t.a4 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
         insert into t.a5 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
         insert into t.a6 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);`
 
-	runBench1 := benchQueryWithQoS(numOps, sqlRun, setBackgroundQoSStmt, insStmt)
-	runBench2 := benchQueryWithQoS(numOps, sqlRun, setCriticalQoSStmt, insStmt)
-
-	b.Run(`Bench1`, func(b *testing.B) {
-		runBench1(b)
-	})
-	b.Run(`Bench2`, func(b *testing.B) {
-		runBench2(b)
+	// Background SQLs: OLAP     BenchMark SQLs: OLTP Inserts
+	olapOltpDML := benchQueryWithQoS(benchParams, numOps, qosLevel, insStmt)
+	b.Run(`backgroundOlap_DML`, func(b *testing.B) {
+		olapOltpDML(b)
 	})
 
-	const numOps2 = 1
-	runBench3 := benchQueryWithQoS(numOps2, sqlRun, setBackgroundQoSStmt, olapQueryStmt)
-	runBench4 := benchQueryWithQoS(numOps2, sqlRun, setCriticalQoSStmt, olapQueryStmt)
-
-	b.Run(`Bench3`, func(b *testing.B) {
-		runBench3(b)
-	})
-	b.Run(`Bench4`, func(b *testing.B) {
-		runBench4(b)
+	// Background SQLs: OLAP     BenchMark SQLs: OLAP
+	olapOlap := benchQueryWithQoS(benchParams, numOps, qosLevel, olapQueryStmt)
+	b.Run(`backgroundOlap_OLAP`, func(b *testing.B) {
+		olapOlap(b)
 	})
 
+	// Background SQLs: OLAP     BenchMark SQLs: OLTP
 	OltpStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE k=1;`, tableName)
-	runBench5 := benchQueryWithQoS(numOps2, sqlRun, setBackgroundQoSStmt, OltpStmt)
-	runBench6 := benchQueryWithQoS(numOps2, sqlRun, setCriticalQoSStmt, OltpStmt)
-
-	b.Run(`Bench5`, func(b *testing.B) {
-		runBench5(b)
-	})
-
-	b.Run(`Bench6`, func(b *testing.B) {
-		runBench6(b)
+	olapOltp := benchQueryWithQoS(benchParams, numOps, qosLevel, OltpStmt)
+	b.Run(`backgroundOlap_OLTP`, func(b *testing.B) {
+		olapOltp(b)
 	})
 
 	stopper.Quiesce(ctx)
