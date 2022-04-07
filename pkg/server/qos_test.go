@@ -120,7 +120,7 @@ func BenchmarkQoS1(b *testing.B) {
 `)
 
 	var setQoSStmt string
-	critical := true
+	critical := false
 	if critical {
 		setQoSStmt = `SET default_transaction_quality_of_service=regular; `
 	} else {
@@ -147,14 +147,14 @@ func BenchmarkQoS1(b *testing.B) {
 	////}()
 	olapQueryStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s a, %s b, %s c, %s d WHERE a.k = b.k AND 
                     b.k = c.k and c.k = d.k;`, tableName, tableName, tableName, tableName)
-	olapQueryStmt2 := fmt.Sprintf(`SELECT COUNT(*) FROM %s a;`, tableName)
+	//olapQueryStmt2 := fmt.Sprintf(`SELECT COUNT(*) FROM %s a;`, tableName)
 	stopper := tc.Stopper()
 	// Start a bunch of asynchronous SQLs to provide workload contention with
 	// our benchmark queries.
-	const numStmts = 464
+	const numStmts = 32
 	for i := 0; i < numStmts; i++ {
 		startBackgroundSQL(
-			b, stopper, gatewayServer, ctx, setQoSStmt, olapQueryStmt2, 3)
+			b, stopper, gatewayServer, ctx, setQoSStmt, olapQueryStmt, 3)
 	}
 	// Make sure the background queries have started.
 	time.Sleep(10 * time.Millisecond)
@@ -178,7 +178,7 @@ func BenchmarkQoS1(b *testing.B) {
 		runBench2(b)
 	})
 
-	const numOps2 = 2
+	const numOps2 = 1
 	runBench3 := benchQueryWithQoS(numOps2, sqlRun, setBackgroundQoSStmt, olapQueryStmt)
 	runBench4 := benchQueryWithQoS(numOps2, sqlRun, setCriticalQoSStmt, olapQueryStmt)
 
