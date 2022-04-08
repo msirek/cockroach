@@ -79,9 +79,7 @@ func benchQueryWithQoS(
 		for i := 0; i < params.backgroundSqlNumRuns; i++ {
 			startBackgroundSQL(b, params)
 		}
-		// Set the QoS level of the main SQL we're benchmarking.
-		setQoSStmt, _ := qosSetStmtDict[qoSLevel]
-		params.sqlRun.Exec(b, setQoSStmt)
+
 		b.ResetTimer()
 		b.StartTimer()
 		for i := 0; i < b.N; i++ {
@@ -112,9 +110,9 @@ func BenchmarkQoS1(b *testing.B) {
 	//
 	sqlRun.Exec(b,
 		`CREATE DATABASE t;
-        CREATE TABLE t.a1 (k INT PRIMARY KEY USING HASH WITH BUCKET_COUNT = 256, v CHAR(30000));
-        CREATE TABLE t.a2 (k INT PRIMARY KEY, v CHAR(30000));
-        CREATE TABLE t.a3 (k INT, v CHAR(30000));
+        CREATE TABLE t.a1 (k INT PRIMARY KEY USING HASH WITH BUCKET_COUNT = 256, v CHAR(3));
+        CREATE TABLE t.a2 (k INT PRIMARY KEY, v CHAR(3));
+        CREATE TABLE t.a3 (k INT, v CHAR(3));
         CREATE TABLE t.a4 (k INT);
         CREATE TABLE t.a5 (k INT);
         CREATE TABLE t.a6 (k INT);
@@ -126,7 +124,7 @@ func BenchmarkQoS1(b *testing.B) {
 `)
 	const tableName = `t.a1`
 
-	insSelStmt := fmt.Sprintf(`insert into %s select g, 'foo' from generate_series(1,500000) g(g);`, tableName)
+	insSelStmt := fmt.Sprintf(`insert into %s select g, 'foo' from generate_series(1,50000) g(g);`, tableName)
 	sqlRun.Exec(b, insSelStmt)
 
 	olapQueryStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s a, %s b, %s c, %s d WHERE a.k = b.k AND 
@@ -139,17 +137,20 @@ func BenchmarkQoS1(b *testing.B) {
 		gatewayServer:         gatewayServer,
 		ctx:                   ctx,
 		sqlRun:                sqlRun,         // Runner to use for the main SQL
-		backgroundSqlQoSLevel: Regular,        // CHANGE THIS and compare runtimes
+		backgroundSqlQoSLevel: Background,     // CHANGE THIS and compare runtimes
 		backgroundSqlStmt:     olapQueryStmt2, // The specific background SQL to run
 		backgroundSqlNumRuns:  1,              // Adjusts the CPU contention
 	}
 
 	// CHANGE THIS along with backgroundSqlQoSLevel for comparative benchmarking.
 	// Valid levels: Background, Regular, Critical
-	const qosLevel = Regular
+	const qosLevel = Background
+	// Set the QoS level of the main SQL we're benchmarking.
+	setQoSStmt, _ := qosSetStmtDict[qosLevel]
+	sqlRun.Exec(b, setQoSStmt)
 
 	// Change numOps to see if issuing many statements in a tight loop matters.
-	const numOps = 1
+	const numOps = 25
 	const insStmt = `insert into t.a2 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
         insert into t.a3 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
         insert into t.a4 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
