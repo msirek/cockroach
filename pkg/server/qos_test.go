@@ -221,11 +221,7 @@ func BenchmarkQoS(b *testing.B) {
 
 	// Change numOps to see if issuing many statements in a tight loop matters.
 	const numOps = 1
-	const insStmt = `insert into t.a2 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
-        insert into t.a3 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
-        insert into t.a4 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
-        insert into t.a5 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
-        insert into t.a6 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);`
+	insStmt := fmt.Sprintf(`insert into %s VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);`, benchTableName)
 
 	// Background SQLs: OLAP     BenchMark SQLs: OLTP Inserts
 	olapOltpDML := benchQueryWithQoS(benchParams, numOps, BenchmarkSqlQoSLevel, insStmt)
