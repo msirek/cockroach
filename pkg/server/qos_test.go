@@ -33,6 +33,15 @@ const (
 	Critical   = QoSUserLevel(sessiondatapb.UserHigh)
 )
 
+// The Quality of Service level to use for background SQLs competing for
+// resources with the other SQLs we are benchmarking. CHANGE THIS and compare
+// runtimes.
+const BackgroundSqlQoSLevel = Regular
+
+// The Quality of Service level to use for the SQLs we are benchmarking.
+// CHANGE THIS along with backgroundSqlQoSLevel for comparative benchmarking.
+const BenchmarkSqlQoSLevel = Regular
+
 var qosSetStmtDict = map[QoSUserLevel]string{
 	Background: `SET default_transaction_quality_of_service=background; `,
 	Regular:    `SET default_transaction_quality_of_service=regular; `,
@@ -136,17 +145,14 @@ func BenchmarkQoS1(b *testing.B) {
 		stopper:               stopper,
 		gatewayServer:         gatewayServer,
 		ctx:                   ctx,
-		sqlRun:                sqlRun,         // Runner to use for the main SQL
-		backgroundSqlQoSLevel: Background,     // CHANGE THIS and compare runtimes
+		sqlRun:                sqlRun, // Runner to use for the main SQL
+		backgroundSqlQoSLevel: BackgroundSqlQoSLevel,
 		backgroundSqlStmt:     olapQueryStmt2, // The specific background SQL to run
-		backgroundSqlNumRuns:  1,              // Adjusts the CPU contention
+		backgroundSqlNumRuns:  16,             // Adjusts the CPU contention
 	}
 
-	// CHANGE THIS along with backgroundSqlQoSLevel for comparative benchmarking.
-	// Valid levels: Background, Regular, Critical
-	const qosLevel = Background
 	// Set the QoS level of the main SQL we're benchmarking.
-	setQoSStmt, _ := qosSetStmtDict[qosLevel]
+	setQoSStmt, _ := qosSetStmtDict[BenchmarkSqlQoSLevel]
 	sqlRun.Exec(b, setQoSStmt)
 
 	// Change numOps to see if issuing many statements in a tight loop matters.
@@ -158,20 +164,20 @@ func BenchmarkQoS1(b *testing.B) {
         insert into t.a6 VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);`
 
 	// Background SQLs: OLAP     BenchMark SQLs: OLTP Inserts
-	olapOltpDML := benchQueryWithQoS(benchParams, numOps, qosLevel, insStmt)
+	olapOltpDML := benchQueryWithQoS(benchParams, numOps, BenchmarkSqlQoSLevel, insStmt)
 	b.Run(`backgroundOlap_DML`, func(b *testing.B) {
 		olapOltpDML(b)
 	})
 
 	// Background SQLs: OLAP     BenchMark SQLs: OLAP
-	olapOlap := benchQueryWithQoS(benchParams, numOps, qosLevel, olapQueryStmt)
+	olapOlap := benchQueryWithQoS(benchParams, numOps, BenchmarkSqlQoSLevel, olapQueryStmt)
 	b.Run(`backgroundOlap_OLAP`, func(b *testing.B) {
 		olapOlap(b)
 	})
 
 	// Background SQLs: OLAP     BenchMark SQLs: OLTP
 	OltpStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE k=1;`, tableName)
-	olapOltp := benchQueryWithQoS(benchParams, numOps, qosLevel, OltpStmt)
+	olapOltp := benchQueryWithQoS(benchParams, numOps, BenchmarkSqlQoSLevel, OltpStmt)
 	b.Run(`backgroundOlap_OLTP`, func(b *testing.B) {
 		olapOltp(b)
 	})
