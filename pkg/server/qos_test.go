@@ -42,7 +42,7 @@ const BackgroundSqlQoSLevel = Regular
 // The Quality of Service level to use for the SQLs we are benchmarking.
 // CHANGE THIS along with backgroundSqlQoSLevel for comparative benchmarking.
 // Valid values: Background, Regular, Critical
-const BenchmarkSqlQoSLevel = Critical
+const BenchmarkSqlQoSLevel = Regular
 
 // Adjusts the CPU contention by specifying the number of simultaneous background
 // queries to run.  CHANGE THIS and compare runtimes.
@@ -97,11 +97,11 @@ func printRunInfo(
 		benchmarkSqlQoSLevelString = "Critical"
 	}
 	fmt.Println("—————————————————————————————————————————————————————————————————————")
-	fmt.Printf("BackgroundSqlQoSLevel: %s     ", backgroundSqlQoSLevelString)
-	fmt.Printf("BenchmarkSqlQoSLevel: %s     ", benchmarkSqlQoSLevelString)
-	fmt.Printf("BackgroundSqlNumQueries: %d\n", BackgroundSqlNumQueries)
-	fmt.Printf("backgroundTableName:   %s        ", backgroundTableName)
+	fmt.Printf("BackgroundSqlQoSLevel:   %s     ", backgroundSqlQoSLevelString)
+	fmt.Printf("BenchmarkSqlQoSLevel: %s     \n", benchmarkSqlQoSLevelString)
+	fmt.Printf("backgroundTableName:     %s        ", backgroundTableName)
 	fmt.Printf("benchTableName:       %s\n", benchTableName)
+	fmt.Printf("BackgroundSqlNumQueries: %d\n", BackgroundSqlNumQueries)
 	fmt.Println(loadBGTableStmt)
 	fmt.Println(loadBenchTableStmt)
 	fmt.Println("—————————————————————————————————————————————————————————————————————")
@@ -136,11 +136,6 @@ func benchQueryWithQoS(
 	params qosBenchmarkParams, numOps int, qoSLevel QoSUserLevel, queryStmt string,
 ) func(b *testing.B) {
 	return func(b *testing.B) {
-		// Kick off some SQLs in asynchronous tasks for CPU contention.
-		//for i := 0; i < params.backgroundSqlNumQueries; i++ {
-		//	startBackgroundSQL(b, params)
-		//}  // msirek-temp
-
 		b.ResetTimer()
 		b.StartTimer()
 		for i := 0; i < b.N; i++ {
@@ -166,22 +161,15 @@ func BenchmarkQoS(b *testing.B) {
 	sqlDB := tc.ServerConn(0)
 	gatewayServer := tc.Server(0 /* idx */).(*TestServer)
 	sqlRun := sqlutils.MakeSQLRunner(sqlDB)
-	// Create some tables. Specific below in the `tableName` const the table to
-	// use for the specific benchmark run.
-	//
+	sqlRun.Exec(b, `SET CLUSTER SETTING sql.stats.automatic_collection.enabled = false;`)
+
+	// Create some tables. Specify below in the `backgroundTableName` and
+	// benchTableName consts the tables to use for the specific benchmark run.
 	sqlRun.Exec(b,
 		`CREATE DATABASE t;
         CREATE TABLE t.a1 (k INT PRIMARY KEY USING HASH WITH BUCKET_COUNT = 256, v CHAR(3));
         CREATE TABLE t.a2 (k INT PRIMARY KEY, v CHAR(3));
         CREATE TABLE t.a3 (k INT, v CHAR(3));
-        CREATE TABLE t.a4 (k INT);
-        CREATE TABLE t.a5 (k INT);
-        CREATE TABLE t.a6 (k INT);
-        CREATE TABLE t.a7 (k INT);
-        CREATE TABLE t.a8 (k INT);
-        CREATE TABLE t.a9 (k INT);
-        CREATE TABLE t.a10 (k INT);
-
 `)
 
 	const backgroundTableName = `t.a2`
@@ -195,10 +183,7 @@ func BenchmarkQoS(b *testing.B) {
 	sqlRun.Exec(b, loadBGTableStmt)
 	sqlRun.Exec(b, loadBenchTableStmt)
 
-	//olapQueryStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s a, %s b, %s c, %s d WHERE a.k = b.k AND
-	//                  b.k = c.k and c.k = d.k;`, backgroundTableName, backgroundTableName,
-	//	backgroundTableName, backgroundTableName)
-	olapQueryStmt2 := fmt.Sprintf(`SELECT COUNT(*) FROM %s a;`, backgroundTableName)
+	olapBackgroundQueryStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s a;`, backgroundTableName)
 	stopper := tc.Stopper()
 
 	benchParams := qosBenchmarkParams{
@@ -207,12 +192,12 @@ func BenchmarkQoS(b *testing.B) {
 		ctx:                     ctx,
 		sqlRun:                  sqlRun, // Runner to use for the main SQL
 		backgroundSqlQoSLevel:   BackgroundSqlQoSLevel,
-		backgroundSqlStmt:       olapQueryStmt2,          // The specific background SQL to run
+		backgroundSqlStmt:       olapBackgroundQueryStmt, // The specific background SQL to run
 		backgroundSqlNumQueries: BackgroundSqlNumQueries, // Adjusts the CPU contention
 	}
 
 	startBackgroundSQL(b, benchParams)
-	// Let the workload warm up and stabilize.
+	// Let the background workload warm up and stabilize.
 	time.Sleep(1 * time.Second)
 
 	// Set the QoS level of the main SQL we're benchmarking.
@@ -221,7 +206,7 @@ func BenchmarkQoS(b *testing.B) {
 
 	// Change numOps to see if issuing many statements in a tight loop matters.
 	const numOps = 1
-	insStmt := fmt.Sprintf(`insert into %s VALUES (1),(1),(1),(1),(1),(1),(1),(1),(1),(1);`, benchTableName)
+	insStmt := fmt.Sprintf(`insert into %s VALUES (1, 'foo');`, benchTableName)
 
 	// Background SQLs: OLAP     BenchMark SQLs: OLTP Inserts
 	olapOltpDML := benchQueryWithQoS(benchParams, numOps, BenchmarkSqlQoSLevel, insStmt)
@@ -248,4 +233,5 @@ func BenchmarkQoS(b *testing.B) {
 	})
 
 	stopper.Quiesce(ctx)
+	b.ReportAllocs()
 }
