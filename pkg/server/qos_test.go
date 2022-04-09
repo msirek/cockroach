@@ -126,7 +126,8 @@ func startBackgroundSQL(b *testing.B, params qosBenchmarkParams) {
 					return
 				default:
 				}
-				sqlRunner.Exec(b, params.backgroundSqlStmt)
+				rows := sqlRunner.Query(b, params.backgroundSqlStmt)
+				rows.Close()
 			}
 		},
 		)
