@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/base"
+	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/sql/sessiondatapb"
 	"github.com/cockroachdb/cockroach/pkg/sql/tests"
 	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
@@ -132,15 +133,27 @@ func startBackgroundSQL(b *testing.B, params qosBenchmarkParams) {
 	}
 }
 
-func benchQueryWithQoS(
-	params qosBenchmarkParams, numOps int, qoSLevel QoSUserLevel, queryStmt string,
-) func(b *testing.B) {
+func benchQueryWithQoS(params qosBenchmarkParams, numOps int, queryStmt string) func(b *testing.B) {
 	return func(b *testing.B) {
 		b.ResetTimer()
 		b.StartTimer()
 		for i := 0; i < b.N; i++ {
 			for j := 0; j < numOps; j++ {
-				params.sqlRun.Exec(b, fmt.Sprintf("%s", queryStmt))
+				rows := params.sqlRun.Query(b, queryStmt)
+				rows.Close()
+			}
+		}
+		b.StopTimer()
+	}
+}
+
+func benchDMLWithQoS(params qosBenchmarkParams, numOps int, dmlStmt string) func(b *testing.B) {
+	return func(b *testing.B) {
+		b.ResetTimer()
+		b.StartTimer()
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < numOps; j++ {
+				params.sqlRun.Exec(b, dmlStmt)
 			}
 		}
 		b.StopTimer()
@@ -154,7 +167,10 @@ func BenchmarkQoS(b *testing.B) {
 
 	params, _ := tests.CreateTestServerParams()
 	params.Insecure = true
+	// TODO(msirek): Reduce these budget sizes when memory accounting is
 	params.SQLMemoryPoolSize = 8 << 30
+	params.TempStorageConfig =
+		base.DefaultTestTempStorageConfigWithSize(cluster.MakeTestingClusterSettings(), 1<<30)
 	tc := serverutils.StartNewTestCluster(b, 1, /* numNodes */
 		base.TestClusterArgs{ServerArgs: params})
 	defer tc.Stopper().Stop(ctx)
@@ -206,30 +222,28 @@ func BenchmarkQoS(b *testing.B) {
 
 	// Change numOps to see if issuing many statements in a tight loop matters.
 	const numOps = 1
-	insStmt := fmt.Sprintf(`insert into %s VALUES (1, 'foo');`, benchTableName)
-
-	// Background SQLs: OLAP     BenchMark SQLs: OLTP Inserts
-	olapOltpDML := benchQueryWithQoS(benchParams, numOps, BenchmarkSqlQoSLevel, insStmt)
-	b.Run(`backgroundOlap_DML`, func(b *testing.B) {
-		olapOltpDML(b)
-	})
-
 	olapBenchQueryStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s a, %s b, %s c, %s d WHERE a.k = b.k AND 
                     b.k = c.k and c.k = d.k;`, benchTableName, benchTableName,
 		benchTableName, benchTableName)
-	//olapBenchQueryStmt2 := fmt.Sprintf(`SELECT COUNT(*) FROM %s a;`, benchTableName)
+
+	// Background SQLs: OLAP     BenchMark SQLs: OLTP
+	OltpStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE k=1;`, benchTableName)
+	olapOltp := benchQueryWithQoS(benchParams, numOps, OltpStmt)
+	b.Run(`backgroundOlap_OLTP`, func(b *testing.B) {
+		olapOltp(b)
+	})
 
 	// Background SQLs: OLAP     BenchMark SQLs: OLAP
-	olapOlap := benchQueryWithQoS(benchParams, numOps, BenchmarkSqlQoSLevel, olapBenchQueryStmt)
+	olapOlap := benchQueryWithQoS(benchParams, numOps, olapBenchQueryStmt)
 	b.Run(`backgroundOlap_OLAP`, func(b *testing.B) {
 		olapOlap(b)
 	})
 
-	// Background SQLs: OLAP     BenchMark SQLs: OLTP
-	OltpStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE k=1;`, benchTableName)
-	olapOltp := benchQueryWithQoS(benchParams, numOps, BenchmarkSqlQoSLevel, OltpStmt)
-	b.Run(`backgroundOlap_OLTP`, func(b *testing.B) {
-		olapOltp(b)
+	// Background SQLs: OLAP     BenchMark SQLs: OLTP Inserts
+	insStmt := fmt.Sprintf(`insert into %s VALUES (1, 'foo');`, benchTableName)
+	olapOltpDML := benchDMLWithQoS(benchParams, numOps, insStmt)
+	b.Run(`backgroundOlap_DML`, func(b *testing.B) {
+		olapOltpDML(b)
 	})
 
 	stopper.Quiesce(ctx)
