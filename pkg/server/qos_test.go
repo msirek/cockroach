@@ -14,7 +14,6 @@ import (
 	"context"
 	"fmt"
 	"runtime"
-	"runtime/debug"
 	"testing"
 	"time"
 
@@ -40,12 +39,12 @@ import (
 // The Quality of Service level to use for background SQLs competing for
 // resources with the other SQLs we are benchmarking. CHANGE THIS and compare
 // runtimes. Valid values: Background, Regular, Critical
-const BackgroundSqlQoSLevel = Regular
+const BackgroundSqlQoSLevel = Background
 
 // The Quality of Service level to use for the SQLs we are benchmarking.
 // CHANGE THIS along with backgroundSqlQoSLevel for comparative benchmarking.
 // Valid values: Background, Regular, Critical
-const BenchmarkSqlQoSLevel = Critical
+const BenchmarkSqlQoSLevel = Regular
 
 // Adjusts the CPU contention by specifying the number of simultaneous background
 // queries to run.  CHANGE THIS and compare runtimes.
@@ -193,7 +192,7 @@ func runGCThenDisable() {
 
 	// Disable garbage collection during the test so there is no effect on CPU
 	// from this operation kicking in.
-	debug.SetGCPercent(-1)
+	//debug.SetGCPercent(-1)
 
 	// Give GC some time to complete.
 	time.Sleep(2 * time.Second)
