@@ -45,7 +45,7 @@ const BackgroundSqlQoSLevel = Regular
 // The Quality of Service level to use for the SQLs we are benchmarking.
 // CHANGE THIS along with backgroundSqlQoSLevel for comparative benchmarking.
 // Valid values: Background, Regular, Critical
-const BenchmarkSqlQoSLevel = Regular
+const BenchmarkSqlQoSLevel = Critical
 
 // Adjusts the CPU contention by specifying the number of simultaneous background
 // queries to run.  CHANGE THIS and compare runtimes.
@@ -187,6 +187,18 @@ func benchDMLWithQoS(params qosBenchmarkParams, numOps int, dmlStmt string) func
 	}
 }
 
+func runGCThenDisable() {
+	// Start memory with a clean slate.
+	runtime.GC()
+
+	// Disable garbage collection during the test so there is no effect on CPU
+	// from this operation kicking in.
+	debug.SetGCPercent(-1)
+
+	// Give GC some time to complete.
+	time.Sleep(2 * time.Second)
+}
+
 func BenchmarkQoS(b *testing.B) {
 	defer leaktest.AfterTest(b)()
 	defer log.Scope(b).Close(b)
@@ -248,15 +260,8 @@ func BenchmarkQoS(b *testing.B) {
 	sqlRun.Exec(b, loadBGTableStmt)
 	sqlRun.Exec(b, loadBenchTableStmt)
 
-	// Start memory with a clean slate.
-	runtime.GC()
-
-	// Disable garbage collection during the test so there is no effect on CPU
-	// from this operation kicking in.
-	debug.SetGCPercent(-1)
-
-	// Give GC some time to complete.
-	time.Sleep(2 * time.Second)
+	// Don't let the garbage collector throw randomness into our results.
+	runGCThenDisable()
 
 	startBackgroundSQL(b, benchParams)
 	// Let the background workload warm up and stabilize.
