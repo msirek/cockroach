@@ -39,7 +39,7 @@ import (
 // The Quality of Service level to use for background SQLs competing for
 // resources with the other SQLs we are benchmarking. CHANGE THIS and compare
 // runtimes. Valid values: Background, Regular, Critical
-const BackgroundSqlQoSLevel = Background
+const BackgroundSqlQoSLevel = Regular
 
 // The Quality of Service level to use for the SQLs we are benchmarking.
 // CHANGE THIS along with backgroundSqlQoSLevel for comparative benchmarking.
@@ -233,7 +233,7 @@ func BenchmarkQoS(b *testing.B) {
 	loadBenchTableStmt := fmt.Sprintf(
 		`INSERT INTO %s SELECT g, 'foo' FROM generate_series(1,100000) g(g);`, benchTableName)
 	OltpStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE k=1;`, benchTableName)
-	olapBenchQueryStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s a, %s b, %s c, %s d 
+	olapBenchQueryStmt := fmt.Sprintf(`SELECT SUM(a.k+b.k+c.k+d.k) FROM %s a, %s b, %s c, %s d 
                             WHERE a.k = b.k AND b.k = c.k and c.k = d.k;`,
 		benchTableName, benchTableName, benchTableName, benchTableName)
 	insStmt := fmt.Sprintf(`INSERT INTO %s SELECT MAX(k)+1 from %s;`,
