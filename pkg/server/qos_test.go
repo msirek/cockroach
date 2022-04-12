@@ -42,20 +42,20 @@ const BenchmarkSqlQoSLevel = Regular
 
 // Adjusts the CPU contention by specifying the number of simultaneous background
 // queries to run.  CHANGE THIS and compare runtimes.
-const BackgroundSqlNumQueries = 4
+const BackgroundSqlNumQueries = 8
 
 // Define which tables to use for the background queries and benchmark queries.
 const backgroundTableName = `t.a2`
-const benchTableName = `t.a4`
+const benchTableName = `t.a3`
 
 // Define the OLAP background query statement.
 func olapBackgroundQuery() string {
-	// olapBackgroundQueryStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s;`, backgroundTableName)  // msirek-temp
-	olapBackgroundQueryStmt := fmt.Sprintf(`SELECT SUM(a.k+b.k+c.k+d.k) FROM %s a 
-                       INNER HASH JOIN %s b ON a.k = b.k 
-                       INNER HASH JOIN %s c ON b.k = c.k 
-                       INNER HASH JOIN %s d ON c.k = d.k;`,
-		backgroundTableName, backgroundTableName, backgroundTableName, backgroundTableName)
+	olapBackgroundQueryStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s;`, backgroundTableName) // msirek-temp
+	//olapBackgroundQueryStmt := fmt.Sprintf(`SELECT SUM(a.k+b.k+c.k+d.k) FROM %s a
+	//                     INNER HASH JOIN %s b ON a.k = b.k
+	//                     INNER HASH JOIN %s c ON b.k = c.k
+	//                     INNER HASH JOIN %s d ON c.k = d.k;`,
+	//	backgroundTableName, backgroundTableName, backgroundTableName, backgroundTableName)
 	return olapBackgroundQueryStmt
 }
 
