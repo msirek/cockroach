@@ -13,7 +13,7 @@ package server
 import (
 	"context"
 	"fmt"
-	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,20 +42,20 @@ const BenchmarkSqlQoSLevel = Regular
 
 // Adjusts the CPU contention by specifying the number of simultaneous background
 // queries to run.  CHANGE THIS and compare runtimes.
-const BackgroundSqlNumQueries = 128
+const BackgroundSqlNumQueries = 16
 
 // Define which tables to use for the background queries and benchmark queries.
-const backgroundTableName = `t.a1`
+const backgroundTableName = `t.a4`
 const benchTableName = `t.a3`
 
 // Define the OLAP background query statement.
 func olapBackgroundQuery() string {
-	olapBackgroundQueryStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s;`, backgroundTableName) // msirek-temp
+	olapBackgroundQueryStmt := fmt.Sprintf(`SELECT MAX(v) FROM %s;`, backgroundTableName) // msirek-temp
 	//olapBackgroundQueryStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE k=1;`, backgroundTableName) // msirek-temp
 	//olapBackgroundQueryStmt := fmt.Sprintf(`SELECT SUM(a.k+b.k+c.k+d.k) FROM %s a
-	//                     INNER HASH JOIN %s b ON a.k = b.k
-	//                     INNER HASH JOIN %s c ON b.k = c.k
-	//                     INNER HASH JOIN %s d ON c.k = d.k;`,
+	//                    INNER HASH JOIN %s b ON a.k = b.k
+	//                    INNER HASH JOIN %s c ON b.k = c.k
+	//                    INNER HASH JOIN %s d ON c.k = d.k;`,
 	//	backgroundTableName, backgroundTableName, backgroundTableName, backgroundTableName)
 	return olapBackgroundQueryStmt
 }
@@ -65,7 +65,7 @@ var tableDefMap = map[string]string{
                                               BUCKET_COUNT = 256, v CHAR(3));`,
 	"t.a2": `CREATE TABLE t.a2 (k INT PRIMARY KEY, v CHAR(3));`,
 	"t.a3": `CREATE TABLE t.a3 (k INT PRIMARY KEY, v CHAR(3));`,
-	"t.a4": `CREATE TABLE t.a4 (k INT, v CHAR(3));`,
+	"t.a4": `CREATE TABLE t.a4 (k INT, v CHAR(90000));`,
 }
 
 type QoSUserLevel sessiondatapb.QoSLevel
@@ -130,7 +130,7 @@ func printRunInfo(
 func startBackgroundSQL(b *testing.B, params *qosBenchmarkParams) {
 	for j := 0; j < params.backgroundSqlNumQueries; j++ {
 		instanceNumber := j
-		k := 1
+		//k := 1  // msirek-temp
 		_ = params.stopper.RunAsyncTask(params.ctx, "Background Query", func(ctx context.Context) {
 			sqlDB := serverutils.OpenDBConn(
 				b, params.gatewayServer.ServingSQLAddr(), "" /* useDatabase */, true, /* insecure */
@@ -148,21 +148,21 @@ func startBackgroundSQL(b *testing.B, params *qosBenchmarkParams) {
 				select {
 				case setStatement := <-params.setQoSStatements[instanceNumber]:
 					// Set a new QoSLevel if instructed.
-					if instanceNumber == 0 { // msirek-temp
-						fmt.Printf("Setting new QoS level for background SQL task %d:  ", instanceNumber)
-						fmt.Println(setStatement)
-					}
+					//if instanceNumber == 0 { // msirek-temp
+					fmt.Printf("Setting new QoS level for background SQL task %d:  ", instanceNumber)
+					fmt.Println(setStatement)
+					//}
 					sqlRunner.Exec(b, setStatement)
 				default:
 				}
-				olapBackgroundQueryStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE k=%d;`, backgroundTableName, k) // msirek-temp
-				rows := sqlRunner.Query(b, olapBackgroundQueryStmt)
-				// rows := sqlRunner.Query(b, params.backgroundSqlStmt)  // msirek-temp
+				//olapBackgroundQueryStmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE k=%d;`, backgroundTableName, k) // msirek-temp
+				//rows := sqlRunner.Query(b, olapBackgroundQueryStmt)
+				rows := sqlRunner.Query(b, params.backgroundSqlStmt) // msirek-temp
 				rows.Close()
-				k++
-				if k > 500000 {
-					k = 1
-				}
+				//k++
+				//if k > 500000 {
+				//	k = 1
+				//}
 			}
 		},
 		)
@@ -177,6 +177,9 @@ func benchQueryWithQoS(
 		for i := 0; i < b.N; i++ {
 			for j := 0; j < numOps; j++ {
 				rows := params.sqlRun.Query(b, queryStmt)
+				if !rows.Next() {
+					panic("oh no!") // msirek-temp
+				}
 				rows.Close()
 			}
 		}
@@ -197,17 +200,24 @@ func benchDMLWithQoS(params *qosBenchmarkParams, numOps int, dmlStmt string) fun
 }
 
 func setBackgroundSqlQoS(level QoSUserLevel, params *qosBenchmarkParams) {
+	var wg sync.WaitGroup
 	for i := 0; i < BackgroundSqlNumQueries; i++ {
-		params.setQoSStatements[i] <- qosSetStmtDict[level]
+		idx := i
+		wg.Add(1)
+		go func(wg *sync.WaitGroup) {
+			defer wg.Done()
+			params.setQoSStatements[idx] <- qosSetStmtDict[level]
+		}(&wg)
 	}
+	wg.Wait()
 }
 
 func runGC() {
-	// Start memory with a clean slate.
-	runtime.GC()
-
-	// Give GC some time to complete.
-	time.Sleep(5 * time.Second)
+	//// Start memory with a clean slate.
+	//runtime.GC()  // msirek-temp
+	//
+	//// Give GC some time to complete.
+	//time.Sleep(5 * time.Second)
 }
 
 func setupCluster(
@@ -248,10 +258,14 @@ func setupCluster(
 
 	fmt.Println("")
 	loadBGTableStmt := fmt.Sprintf(
-		`INSERT INTO %s SELECT g, 'foo' FROM generate_series(1,500000) g(g);`, backgroundTableName)
+		`INSERT INTO %s SELECT CAST(g/10 AS int), 'foo' FROM generate_series(1,500000) g(g);`, backgroundTableName)
 	loadBenchTableStmt := fmt.Sprintf(
 		`INSERT INTO %s SELECT g, 'foo' FROM generate_series(1,100000) g(g);`, benchTableName)
 	oltpBenchQueryStmt = fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE k=1;`, benchTableName)
+	//prepareStmt := fmt.Sprintf(`PREPARE s1 AS SELECT COUNT(*) FROM %s WHERE k=1;`, benchTableName)
+	//sqlRun.Exec(b, prepareStmt) // msirek-temp
+
+	//oltpBenchQueryStmt = "EXECUTE s1"
 	olapBenchQueryStmt = fmt.Sprintf(`SELECT SUM(a.k+b.k+c.k+d.k) FROM %s a 
                        INNER HASH JOIN %s b ON a.k = b.k 
                        INNER HASH JOIN %s c ON b.k = c.k 
