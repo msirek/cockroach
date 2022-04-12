@@ -14,7 +14,6 @@ import (
 	"context"
 	"fmt"
 	"runtime"
-	"runtime/debug"
 	"testing"
 	"time"
 
@@ -43,7 +42,7 @@ const BenchmarkSqlQoSLevel = Regular
 
 // Adjusts the CPU contention by specifying the number of simultaneous background
 // queries to run.  CHANGE THIS and compare runtimes.
-const BackgroundSqlNumQueries = 4
+const BackgroundSqlNumQueries = 128
 
 // Define which tables to use for the background queries and benchmark queries.
 const backgroundTableName = `t.a1`
@@ -286,7 +285,7 @@ func setupCluster(
 
 	// Disable garbage collection during the test so there is no effect on CPU
 	// from this operation kicking in.
-	debug.SetGCPercent(-1)
+	//debug.SetGCPercent(-1)   // msirek-temp
 
 	// This runs some background SQL over and over again while the test runs.
 	startBackgroundSQL(b, benchParams)
