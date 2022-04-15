@@ -23,6 +23,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/tests"
 	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
+	"github.com/cockroachdb/cockroach/pkg/util/admission"
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
@@ -42,11 +43,11 @@ const BenchmarkSqlQoSLevel = Regular
 
 // Adjusts the CPU contention by specifying the number of simultaneous background
 // queries to run.  CHANGE THIS and compare runtimes.
-const BackgroundSqlNumQueries = 16
+const BackgroundSqlNumQueries = 10
 
 // Define which tables to use for the background queries and benchmark queries.
-const backgroundTableName = `t.a4`
-const benchTableName = `t.a3`
+const backgroundTableName = `t.a5`
+const benchTableName = `t.a5`
 
 // Define the OLAP background query statement.
 func olapBackgroundQuery() string {
@@ -66,6 +67,7 @@ var tableDefMap = map[string]string{
 	"t.a2": `CREATE TABLE t.a2 (k INT PRIMARY KEY, v CHAR(3));`,
 	"t.a3": `CREATE TABLE t.a3 (k INT PRIMARY KEY, v CHAR(3));`,
 	"t.a4": `CREATE TABLE t.a4 (k INT, v CHAR(90000));`,
+	"t.a5": `CREATE TABLE t.a5 (k INT, v CHAR(3));`,
 }
 
 type QoSUserLevel sessiondatapb.QoSLevel
@@ -235,6 +237,17 @@ func setupCluster(
 	params.SQLMemoryPoolSize = 8 << 30
 	params.TempStorageConfig =
 		base.DefaultTestTempStorageConfigWithSize(cluster.MakeTestingClusterSettings(), 1<<30)
+	params.Knobs.AdmissionControl = &admission.Options{
+		MaxCPUSlots:                    1000, // msirek-temp
+		SQLKVResponseBurstTokens:       1000,
+		SQLSQLResponseBurstTokens:      1000,
+		SQLStatementLeafStartWorkSlots: 1000,
+		SQLStatementRootStartWorkSlots: 1000,
+		// During testing if CPU isn't responsive and skipEnforcement
+		// turns off admission control queuing behavior, for this test
+		// to be reliable we need that to not happen.
+		TestingDisableSkipEnforcement: true,
+	}
 	tc = serverutils.StartNewTestCluster(b, 1, /* numNodes */
 		base.TestClusterArgs{ServerArgs: params})
 
@@ -248,13 +261,10 @@ func setupCluster(
 
 	// Create some tables. Specify below in the `backgroundTableName` and
 	// benchTableName consts the tables to use for the specific benchmark run.
-	sqlRun.Exec(b,
-		fmt.Sprintf(`CREATE DATABASE t;
-        %s
-        %s
-        %s
-        %s`, tableDefMap["t.a1"], tableDefMap["t.a2"], tableDefMap["t.a3"], tableDefMap["t.a4"],
-		))
+	sqlRun.Exec(b, `CREATE DATABASE t;`)
+	for _, tableDef := range tableDefMap {
+		sqlRun.Exec(b, tableDef)
+	}
 
 	fmt.Println("")
 	loadBGTableStmt := fmt.Sprintf(
