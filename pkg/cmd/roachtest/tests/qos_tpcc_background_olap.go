@@ -13,12 +13,16 @@ package tests
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/cluster"
+	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/option"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/registry"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/spec"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/test"
+	"github.com/cockroachdb/cockroach/pkg/workload/histogram"
+	"github.com/cockroachdb/cockroach/pkg/workload/tpcc"
 )
 
 type tpccQosBackgroundOLAPSpec struct {
@@ -29,59 +33,39 @@ type tpccQosBackgroundOLAPSpec struct {
 	Duration    time.Duration
 }
 
-func (s tpccQosBackgroundOLAPSpec) run(ctx context.Context, t test.Test, c cluster.Cluster) {
-
-	if c.IsLocal() {
-		s.Warehouses = 1
-	}
-	crdbNodes, workloadNode := setupTPCC(
-		ctx, t, c, tpccOptions{
-			Warehouses: s.Warehouses, SetupType: usingImport,
-		})
-	//m := c.NewMonitor(ctx, crdbNodes)
-	//m.Go(func(ctx context.Context) error {
-	//	t.Status("loading TPCH tables")
-	//	cmd := fmt.Sprintf(
-	//		"./workload init tpch {pgurl:1-%d} --data-loader=import",
-	//		c.Spec().NodeCount-1,
-	//	)
-	//	c.Run(ctx, workloadNode, cmd)
-	//	return nil
-	//})
-	//m.Wait()
-	//m.Go(func(ctx context.Context) error {
-	//	t.Status("restoring TPCH dataset for Scale Factor 1")
-	//	if err := loadTPCHDataset(ctx, t, c, 1 /* sf */, m, crdbNodes); err != nil {
-	//		t.Fatal(err)
-	//	}
-	//
-	//	conn := c.Conn(ctx, t.L(), 1)
-	//	defer conn.Close()
-	//	if _, err := conn.Exec("USE tpch;"); err != nil {
-	//		t.Fatal(err)
-	//	}
-	//	scatterTables(t, conn, tpchTables)
-	//	return nil
-	//})
-	//m.Wait()
-
-	//m = c.NewMonitor(ctx, crdbNodes)
+func (s tpccQosBackgroundOLAPSpec) runTpccAndTpch(
+	ctx context.Context,
+	t test.Test,
+	c cluster.Cluster,
+	crdbNodes, workloadNode option.NodeListOption,
+	histogramsPath string,
+	useBackgroundQoS bool,
+) {
 	m := c.NewMonitor(ctx, crdbNodes)
-	//m.Go(func(ctx context.Context) error {
-	//	t.Status("running TPCH with concurrency of 4 in the background")
-	//	const concurrency = 4
-	//	cmd := fmt.Sprintf(
-	//		"./workload run tpch {pgurl:1-%d} --display-every=500ms "+
-	//			"--concurrency=%d --duration=%s",
-	//		c.Spec().NodeCount-1, concurrency, s.Duration,
-	//	)
-	//	c.Run(ctx, workloadNode, cmd)
-	//	return nil
-	//})
-	// histogramsPath := fmt.Sprintf("%s/stats.json", s.getArtifactsPath())  // msirek-temp
-	histogramsPath := t.PerfArtifactsDir() + "/stats.json "
+
+	// Kick off TPC-H with concurrency
 	m.Go(func(ctx context.Context) error {
-		t.WorkerStatus("running tpcc with tpch running concurrently")
+		var backgroundQoSOpt string
+		const concurrency = 4
+		message := fmt.Sprintf("running TPCH with concurrency of %d", concurrency)
+		if useBackgroundQoS {
+			message += " with background quality of service"
+			backgroundQoSOpt = "--background-qos"
+		}
+		t.Status(message)
+		cmd := fmt.Sprintf(
+			"./workload run tpch {pgurl:1-%d} --display-every=500ms "+
+				"--concurrency=%d --duration=%s %s",
+			c.Spec().NodeCount-1, concurrency, s.Duration, backgroundQoSOpt,
+		)
+		c.Run(ctx, workloadNode, cmd)
+		return nil
+	})
+
+	// Kick off TPC-C with no concurrency
+	m.Go(func(ctx context.Context) error {
+		message := "running tpcc with tpch running concurrently"
+		t.WorkerStatus(message)
 		cmd := fmt.Sprintf(
 			"./workload run tpcc"+
 				" --warehouses=%d"+
@@ -93,16 +77,68 @@ func (s tpccQosBackgroundOLAPSpec) run(ctx context.Context, t test.Test, c clust
 		return nil
 	})
 	m.Wait()
-	//snapshots, err := histogram.DecodeSnapshots(histogramsPath)
-	//if err != nil {
-	//	// If we got this far, and can't decode data, it's not a case of
-	//	// overload but something that deserves failing the whole test.
-	//	t.Fatal(err)
-	//}
-	//result := tpcc.NewResultWithSnapshots(s.Warehouses, 0, snapshots)
-	//tpmC := result.TpmC()
-	//fmt.Println(tpmC)
-	verifyNodeLiveness(ctx, c, t, s.Duration)
+}
+
+func (s tpccQosBackgroundOLAPSpec) getTpmcAndEfficiency(
+	ctx context.Context,
+	t test.Test,
+	c cluster.Cluster,
+	workloadNode option.NodeListOption,
+	histogramsPath string,
+) (tpmC float64, efficiency float64) {
+	localHistPath := filepath.Join(t.ArtifactsDir(), "/stats.json")
+	// Copy the performance results from the workloadNode to the local system
+	// where roachtest is being run.
+	if err := c.Get(ctx, t.L(), histogramsPath, localHistPath, workloadNode); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshots, err := histogram.DecodeSnapshots(localHistPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := tpcc.NewResultWithSnapshots(s.Warehouses, 0, snapshots)
+	tpmC = result.TpmC()
+	efficiency = result.Efficiency()
+	return tpmC, efficiency
+}
+
+func (s tpccQosBackgroundOLAPSpec) run(ctx context.Context, t test.Test, c cluster.Cluster) {
+	if c.IsLocal() {
+		s.Warehouses = 1
+	}
+
+	// Set up TPCC tables.
+	crdbNodes, workloadNode := setupTPCC(
+		ctx, t, c, tpccOptions{
+			Warehouses: s.Warehouses, SetupType: usingImport,
+		})
+	m := c.NewMonitor(ctx, crdbNodes)
+	// Set up TPCH tables.
+	m.Go(func(ctx context.Context) error {
+		t.Status("loading TPCH tables")
+		cmd := fmt.Sprintf(
+			"./workload init tpch {pgurl:1-%d} --data-loader=import",
+			c.Spec().NodeCount-1,
+		)
+		c.Run(ctx, workloadNode, cmd)
+		return nil
+	})
+	m.Wait()
+
+	histogramsPath := t.PerfArtifactsDir() + "/stats.json"
+	s.runTpccAndTpch(ctx, t, c, crdbNodes, workloadNode, histogramsPath, false)
+	// Get the TPCC perf and efficiency when TPCH is run at normal QoS.
+	noThrottleTpmC, noThrottleTpccEfficiency :=
+		s.getTpmcAndEfficiency(ctx, t, c, workloadNode, histogramsPath)
+
+	s.runTpccAndTpch(ctx, t, c, crdbNodes, workloadNode, histogramsPath, true)
+	// Get the TPCC perf and efficiency when TPCH is run at background QoS.
+	throttledOlapTpmC, throttledOlapTpccEfficiency :=
+		s.getTpmcAndEfficiency(ctx, t, c, workloadNode, histogramsPath)
+
+	fmt.Println(noThrottleTpmC, noThrottleTpccEfficiency)
+	fmt.Println(throttledOlapTpmC, throttledOlapTpccEfficiency)
 }
 
 func (s tpccQosBackgroundOLAPSpec) getArtifactsPath() string {
