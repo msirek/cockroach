@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/cockroachdb/cockroach/pkg/clusterversion"
 	"github.com/cockroachdb/cockroach/pkg/server/telemetry"
@@ -946,11 +947,23 @@ func (b *Builder) buildApplyJoin(join memo.RelExpr) (execPlan, error) {
 	// a column bound by the left side of this apply join to the column ordinal
 	// in the left side that contains the binding.
 	var leftBoundColMap opt.ColMap
+	var placeHolderMap map[int]*memo.PlaceholderExpr
+	placeHolderMap = make(map[int]*memo.PlaceholderExpr)
+
+	currentNumPlaceholders := len(b.evalCtx.Placeholders.Types)
 	for col, ok := leftBoundCols.Next(0); ok; col, ok = leftBoundCols.Next(col + 1) {
 		v, ok := leftPlan.outputCols.Get(int(col))
 		if !ok {
 			return execPlan{}, fmt.Errorf("couldn't find binding column %d in left output columns", col)
 		}
+		placeholderNum := v + 1 + currentNumPlaceholders
+		placeholderString := strconv.Itoa(placeholderNum)
+		var ph *tree.Placeholder
+		if ph, err = tree.NewPlaceholder(placeholderString); err != nil {
+			return execPlan{}, err
+		}
+		placeholderExpr := join.Memo().MemoizePlaceholder(ph)
+		placeHolderMap[int(col)] = placeholderExpr // msirek-temp
 		leftBoundColMap.Set(int(col), v)
 	}
 
@@ -970,8 +983,10 @@ func (b *Builder) buildApplyJoin(join memo.RelExpr) (execPlan, error) {
 		replaceFn = func(e opt.Expr) opt.Expr {
 			switch t := e.(type) {
 			case *memo.VariableExpr:
-				if leftOrd, ok := leftBoundColMap.Get(int(t.Col)); ok {
-					return f.ConstructConstVal(leftRow[leftOrd], t.Typ)
+				//if leftOrd, ok := leftBoundColMap.Get(int(t.Col)); ok {
+				if _, ok := leftBoundColMap.Get(int(t.Col)); ok {
+					return placeHolderMap[int(t.Col)]
+					// return f.ConstructConstVal(leftRow[leftOrd], t.Typ)  // msirek-temp
 				}
 
 			case *memo.WithScanExpr:

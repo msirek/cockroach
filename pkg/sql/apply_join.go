@@ -69,6 +69,14 @@ type applyJoinNode struct {
 		out tree.Datums
 		// done is true if the left side has been exhausted.
 		done bool
+		// memoBuilt is true if the memo for the right side rows has been built.
+		// This is done the first time a left row is read.
+		memoBuilt bool
+		// numPlaceholdersStart is the number of placeholders used by the plan
+		// before building the apply join.
+		numPlaceholdersStart int
+
+		plan *planComponents
 	}
 }
 
@@ -109,6 +117,7 @@ func (a *applyJoinNode) startExec(params runParams) error {
 	}
 	a.run.out = make(tree.Datums, len(a.columns))
 	a.run.rightRows.Init(a.rightTypes, params.extendedEvalCtx, "apply-join" /* opName */)
+	a.run.numPlaceholdersStart = len(params.p.semaCtx.Placeholders.Types)
 	return nil
 }
 
@@ -207,17 +216,43 @@ func (a *applyJoinNode) Next(params runParams) (bool, error) {
 		leftRow := a.input.plan.Values()
 		a.run.leftRow = leftRow
 
-		// At this point, it's time to do the major lift of apply join: re-planning
-		// the right side of the join using the optimizer, with all outer columns
-		// in the right side replaced by the bindings that were defined by the most
-		// recently read left row.
-		p, err := a.planRightSideFn(newExecFactory(params.p), leftRow)
-		if err != nil {
-			return false, err
-		}
-		plan := p.(*planComponents)
+		if !a.run.memoBuilt {
+			// At this point, it's time to do the major lift of apply join: re-planning
+			// the right side of the join using the optimizer, with all outer columns
+			// in the right side replaced by the bindings that were defined by the most
+			// recently read left row.
+			var qArgs tree.QueryArguments
+			var typeHints tree.PlaceholderTypes
+			var placeholderTypes tree.PlaceholderTypes
 
-		if err := a.runRightSidePlan(params, plan); err != nil {
+			qArgs = make(tree.QueryArguments, len(leftRow))
+			typeHints = make(tree.PlaceholderTypes, len(leftRow))
+			placeholderTypes = make(tree.PlaceholderTypes, len(leftRow))
+			params.p.semaCtx.Placeholders.Values = append(params.p.semaCtx.Placeholders.Values, qArgs...)
+			params.p.semaCtx.Placeholders.TypeHints = append(params.p.semaCtx.Placeholders.TypeHints, typeHints...)
+			params.p.semaCtx.Placeholders.Types = append(params.p.semaCtx.Placeholders.Types, placeholderTypes...)
+			params.p.extendedEvalCtx.Placeholders = &params.p.semaCtx.Placeholders
+			//
+			//if err = planner.semaCtx.Placeholders.Assign(pinfo, len(leftRow)); err != nil {
+			//	return false, err
+			//}  // msirek-temp
+
+			//opc := &planner.optPlanningCtx
+			//opc.reset()  // msirek-temp
+			p, err := a.planRightSideFn(newExecFactory(params.p), leftRow)
+			if err != nil {
+				return false, err
+			}
+			a.run.plan = p.(*planComponents)
+			a.run.memoBuilt = true
+		}
+
+		for i, datum := range leftRow {
+			params.p.semaCtx.Placeholders.Values[i+a.run.numPlaceholdersStart] = datum
+			params.p.semaCtx.Placeholders.Types[i+a.run.numPlaceholdersStart] = datum.ResolvedType()
+		}
+
+		if err := a.runRightSidePlan(params, a.run.plan); err != nil {
 			return false, err
 		}
 
