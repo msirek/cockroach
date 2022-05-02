@@ -741,6 +741,22 @@ func (md *Metadata) AddWithBinding(id WithID, expr Expr) {
 	md.withBindings[id] = expr
 }
 
+// AddWithBinding associates a unique WithID and bound expression, returning the
+// chosen unique WithID.
+func (md *Metadata) AddNextWithBinding(expr Expr) WithID {
+	if md.withBindings == nil {
+		md.withBindings = make(map[WithID]Expr)
+	}
+	withID := WithID(1)
+	for _, ok := md.withBindings[withID]; ok; {
+		withID++
+		_, ok = md.withBindings[withID]
+		continue
+	}
+	md.withBindings[withID] = expr
+	return withID
+}
+
 // WithBinding returns the bound expression for the given WithID.
 // Panics with an assertion error if there is none.
 func (md *Metadata) WithBinding(id WithID) Expr {

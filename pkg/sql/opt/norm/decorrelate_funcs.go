@@ -11,9 +11,13 @@
 package norm
 
 import (
+	"fmt"
+
 	"github.com/cockroachdb/cockroach/pkg/sql/opt"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/memo"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/props"
+	"github.com/cockroachdb/cockroach/pkg/sql/sem/builtins"
+	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/redact"
@@ -1047,4 +1051,49 @@ func (r *subqueryHoister) constructGroupByAny(
 		)},
 		opt.ColSet{},
 	)
+}
+
+func (c *CustomFuncs) DecorrelateUsingWith(
+	left memo.RelExpr,
+	right memo.RelExpr,
+	joinFilters memo.FiltersExpr,
+	joinPrivate *memo.JoinPrivate,
+) (result memo.RelExpr, ok bool) {
+
+	var leftScan *memo.ScanExpr
+	if leftScan, ok = left.(*memo.ScanExpr); !ok {
+		return nil, false
+	}
+
+	args := make(memo.ScalarListExpr, 0)
+	props, fns := builtins.GetBuiltinProperties("unique_rowid")
+	ridColType := fns[0].ReturnType(nil)
+	out := c.f.ConstructFunction(args, &memo.FunctionPrivate{
+		Name:       "unique_rowid",
+		Typ:        ridColType,
+		Properties: props,
+		Overload:   &fns[0],
+	})
+	ridColID := c.f.Metadata().AddColumn("rid", ridColType)
+	projections := make(memo.ProjectionsExpr, 1)
+	projections[0] = c.f.ConstructProjectionsItem(out, ridColID)
+	binding := c.f.ConstructProject(
+		left,
+		projections,
+		leftScan.ScanPrivate.Cols,
+	)
+
+	withID := c.f.Metadata().AddNextWithBinding(binding)
+	mtr := tree.MaterializeClause{}
+	withPrivate := &memo.WithPrivate{
+		ID:   withID,
+		Name: "ReplaceThisDummyName",
+		Mtr:  mtr,
+	}
+	withExpr := c.f.ConstructWith(binding, right, withPrivate)
+	fmt.Printf("%v", withExpr)
+
+	fmt.Printf("%v", binding)
+	fmt.Printf("%v", out)
+	return nil, false
 }

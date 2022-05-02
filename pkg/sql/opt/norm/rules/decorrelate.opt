@@ -1088,3 +1088,22 @@
     )
     $private
 )
+
+[TryDecorrelateUsingWith, Normalize]
+(SemiJoinApply
+    $left:*
+    $right:* & (HasOuterCols $right)
+    $on:*
+    $private:* &
+        (Let
+            ($resultExpr $ok):(DecorrelateUsingWith
+                $left
+                $right
+                $on
+                $private
+            )
+            $ok
+        )
+)
+=>
+$resultExpr
