@@ -228,18 +228,21 @@ func (s tpccQoSBackgroundOLAPSpec) setupDatabases(
 		ctx, t, c, tpccOptions{
 			Warehouses: s.Warehouses, SetupType: usingImport, DontOverrideWarehouses: true,
 		})
-	m := c.NewMonitor(ctx, crdbNodes)
-	// Set up TPCH tables.
-	m.Go(func(ctx context.Context) error {
-		t.Status("loading TPCH tables")
-		cmd := fmt.Sprintf(
-			"./workload init tpch {pgurl:1-%d} --data-loader=import",
-			c.Spec().NodeCount-1,
-		)
-		c.Run(ctx, workloadNode, cmd)
-		return nil
-	})
-	m.Wait()
+	/*
+		m := c.NewMonitor(ctx, crdbNodes)
+		// Set up TPCH tables.
+		m.Go(func(ctx context.Context) error {
+			t.Status("loading TPCH tables")
+			cmd := fmt.Sprintf(
+				"./workload init tpch {pgurl:1-%d} --data-loader=import",
+				c.Spec().NodeCount-1,
+			)
+			c.Run(ctx, workloadNode, cmd)
+			return nil
+		})
+		m.Wait()
+		// msirek-temp
+	*/
 	return crdbNodes, workloadNode
 }
 
@@ -253,22 +256,25 @@ func (s tpccQoSBackgroundOLAPSpec) runTPCCAndOLAPQueries(
 ) {
 	m := c.NewMonitor(ctx, crdbNodes)
 	// Kick off TPC-H with concurrency.
-	m.Go(func(ctx context.Context) error {
-		var backgroundQoSOpt string
-		message := fmt.Sprintf("running TPCH with concurrency of %d", s.OLAPConcurrency)
-		if useBackgroundQoS {
-			message += " with background quality of service"
-			backgroundQoSOpt = "--background-qos"
-		}
-		t.Status(message)
-		cmd := fmt.Sprintf(
-			"./workload run tpch {pgurl:1-%d} --tolerate-errors "+
-				"--concurrency=%d --duration=%s %s",
-			c.Spec().NodeCount-1, s.OLAPConcurrency, s.Duration+s.Ramp, backgroundQoSOpt,
-		)
-		c.Run(ctx, workloadNode, cmd)
-		return nil
-	})
+	/*
+		m.Go(func(ctx context.Context) error {
+			var backgroundQoSOpt string
+			message := fmt.Sprintf("running TPCH with concurrency of %d", s.OLAPConcurrency)
+			if useBackgroundQoS {
+				message += " with background quality of service"
+				backgroundQoSOpt = "--background-qos"
+			}
+			t.Status(message)
+			cmd := fmt.Sprintf(
+				"./workload run tpch {pgurl:1-%d} --tolerate-errors "+
+					"--concurrency=%d --duration=%s %s",
+				c.Spec().NodeCount-1, s.OLAPConcurrency, s.Duration+s.Ramp, backgroundQoSOpt,
+			)
+			c.Run(ctx, workloadNode, cmd)
+			return nil
+		})
+
+	*/
 	s.runTPCC(ctx, t, c, crdbNodes, workloadNode, histogramsPath, useBackgroundQoS)
 	m.Wait()
 }
@@ -388,11 +394,11 @@ func registerTPCCQoSBackgroundOLAPSpec(r registry.Registry, s tpccQoSBackgroundO
 func registerTPCCQoSBackgroundOLAP(r registry.Registry) {
 	specs := []tpccQoSBackgroundOLAPSpec{
 		{
-			CPUs:            4,
-			Concurrency:     32,
+			CPUs:            32,
+			Concurrency:     256,
 			OLAPConcurrency: 64,
 			Nodes:           3,
-			Warehouses:      30,
+			Warehouses:      1,
 			Duration:        10 * time.Minute,
 			Ramp:            1 * time.Minute,
 			numRuns:         1,
