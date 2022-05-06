@@ -35,6 +35,7 @@ import (
 )
 
 type tpccQoSBackgroundOLAPSpec struct {
+	name            string
 	Nodes           int
 	CPUs            int
 	Warehouses      int
@@ -43,6 +44,14 @@ type tpccQoSBackgroundOLAPSpec struct {
 	Duration        time.Duration
 	Ramp            time.Duration
 	numRuns         int
+
+	acEnabled   bool
+	readPercent int
+	blockSize   int
+	duration    time.Duration
+	//concurrency func(int) int
+	batchSize  int
+	maxLoadOps int
 }
 
 type mtFairnessSpec struct {
@@ -62,7 +71,7 @@ func registerMultiTenantFairness(r registry.Registry) {
 		false: "no-admission",
 	}
 	for _, acEnabled := range []bool{true, false} {
-		kvSpecs := []mtFairnessSpec{
+		kvSpecs := []tpccQoSBackgroundOLAPSpec{
 			{
 				name:        "same",
 				concurrency: func(int) int { return 250 },
@@ -144,23 +153,23 @@ func registerMultiTenantFairness(r registry.Registry) {
 	}
 }
 
-// Test that the kvserver fairly distributes CPU token on a highly concurrent 4 sql pod workload.
 func runMultiTenantFairness(
-	ctx context.Context, t test.Test, c cluster.Cluster, s mtFairnessSpec, query string,
+	ctx context.Context, t test.Test, c cluster.Cluster, s tpccQoSBackgroundOLAPSpec, query string,
 ) {
-	numTenants := c.Spec().NodeCount - 1
+	numNodes := c.Spec().NodeCount - 1
+
 	duration := s.duration
 
 	// For quick local testing.
 	quick := c.IsLocal() || s.name == "quick"
 	if quick {
 		duration = 30 * time.Second
-		s.concurrency = func(i int) int { return 4 }
+		s.Concurrency = 4
 	}
 
 	c.Put(ctx, t.Cockroach(), "./cockroach")
-	c.Start(ctx, t.L(), option.DefaultStartOpts(), install.MakeClusterSettings(install.SecureOption(true)), c.Node(1))
-	SetAdmissionControl(ctx, t, c, s.acEnabled)
+	c.Start(ctx, t.L(), option.DefaultStartOpts(), install.MakeClusterSettings(install.SecureOption(true)), c.Node(c.Spec().NodeCount-1))
+	SetAdmissionControl(ctx, t, c, true)
 
 	setRateLimit := func(ctx context.Context, val int, node int) {
 		db := c.Conn(ctx, t.L(), node)
@@ -170,19 +179,31 @@ func runMultiTenantFairness(
 			t.Fatalf("failed to set kv.tenant_rate_limiter.rate_limit: %v", err)
 		}
 	}
-
-	setRateLimit(ctx, 1000000, 1)
+	for i := 1; i <= c.Spec().NodeCount-1; i++ {
+		setRateLimit(ctx, 1000000, i)
+	}
 
 	const (
-		tenantBaseID       = 11
-		tenantBaseHTTPPort = 8081
-		tenantBaseSQLPort  = 26257
+		nodeBaseHTTPPort = 8081
+		nodeBaseSQLPort  = 26257
 	)
 
+	nodeHTTPPort := func(offset int) int {
+		if c.IsLocal() {
+			return nodeBaseHTTPPort + offset
+		}
+		return nodeBaseHTTPPort
+	}
+	nodeSQLPort := func(offset int) int {
+		if c.IsLocal() {
+			return nodeBaseSQLPort + offset
+		}
+		return nodeBaseSQLPort
+	}
 
-	// Init kv on each tenant.
-	cmd := fmt.Sprintf("./cockroach workload init kv '%s' --secure", tenant.secureURL())
-	err = c.RunE(ctx, c.Node(1), cmd)
+	// Init kv from the driver node.
+	cmd := fmt.Sprintf("./cockroach workload init kv {pgurl:1-%d} --secure", c.Spec().NodeCount-1)
+	err := c.RunE(ctx, c.Node(c.Spec().NodeCount), cmd)
 	require.NoError(t, err)
 
 	// This doesn't work on tenant, have to do it on kvserver
@@ -190,73 +211,68 @@ func runMultiTenantFairness(
 	//  failed to set range_max_bytes: pq: unimplemented: operation is unsupported in multi-tenancy mode
 	//setMaxRangeBytes(ctx, 1<<18, node)
 
-	m := c.NewMonitor(ctx, c.Node(1))
+	m := c.NewMonitor(ctx, c.Node(c.Spec().NodeCount))
 
-	// NB: we're using --tolerate-errors because of sql liveness errors like this:
-	// ERROR: liveness session expired 571.043163ms before transaction
-	// dialed back batch to 20 so we don't need.
-
-	t.L().Printf("running dataload 	")
+	//t.L().Printf("running dataload 	")
 
 	m.Go(func(ctx context.Context) error {
 		cmd := fmt.Sprintf(
-			"./cockroach workload run kv '%s' --secure --min-block-bytes %d --max-block-bytes %d "+
+			"./cockroach workload run kv {pgurl:1-%d} --secure --min-block-bytes %d --max-block-bytes %d "+
 				"--batch %d --max-ops %d --concurrency=100",
-			pgurl, s.blockSize, s.blockSize, s.batchSize, s.maxLoadOps)
-		err := c.RunE(ctx, c.Node(node), cmd)
-		t.L().Printf("dataload for tenant %d done", tid)
+			c.Spec().NodeCount-1, s.blockSize, s.blockSize, s.batchSize, s.maxLoadOps)
+		err := c.RunE(ctx, c.Node(c.Spec().NodeCount), cmd)
+		t.L().Printf("dataload done\n")
 		return err
 	})
 
 	m.Wait()
 	t.L().Printf("running main workloads")
-	m = c.NewMonitor(ctx, c.Node(1))
+	m = c.NewMonitor(ctx, c.Node(c.Spec().NodeCount))
 
 	m.Go(func(ctx context.Context) error {
 		cmd := fmt.Sprintf(
 			"./cockroach workload run kv {pgurl:1-%d} --write-seq=%s --secure --min-block-bytes %d "+
 				"--max-block-bytes %d --batch %d --duration=%s --read-percent=%d --concurrency=%d",
 			c.Spec().NodeCount-1, fmt.Sprintf("R%d", s.maxLoadOps*s.batchSize), s.blockSize, s.blockSize, s.batchSize,
-			duration, s.readPercent, s.concurrency(node-1))
-		err := c.RunE(ctx, c.Node(node), cmd)
-		t.L().Printf("workload for tenant %d done", tid)
+			duration, s.readPercent, s.Concurrency)
+		err := c.RunE(ctx, c.Node(c.Spec().NodeCount), cmd)
 		return err
 	})
-	}
 
 	m.Wait()
 	t.L().Printf("workloads done")
 
 	// Pull workload performance from crdb_internal.statement_statistics. Alternatively we could pull these from
 	// workload but this seemed most straightforward.
-	counts := make([]float64, numTenants)
-	meanLatencies := make([]float64, numTenants)
-	for i := 0; i < numTenants; i++ {
-		db, err := gosql.Open("postgres", tenants[i].pgURL)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = db.Close() }()
-		tdb := sqlutils.MakeSQLRunner(db)
-		tdb.Exec(t, "USE kv")
-		querySelector := fmt.Sprintf(`{"querySummary": "%s"}`, query)
-		// TODO: should we check that count of failed queries is smallish?
-		rows := tdb.Query(t, `
+	var counts float64
+	var meanLatency float64
+	counts := make([]float64, numNodes)
+	meanLatencies := make([]float64, numNodes)
+
+	db, err := gosql.Open("postgres", tenants[i].pgURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	tdb := sqlutils.MakeSQLRunner(db)
+	tdb.Exec(t, "USE kv")
+	querySelector := fmt.Sprintf(`{"querySummary": "%s"}`, query)
+	// TODO: should we check that count of failed queries is smallish?
+	rows := tdb.Query(t, `
 			SELECT
 				sum((statistics -> 'statistics' -> 'cnt')::INT),
 				avg((statistics -> 'statistics' -> 'runLat' -> 'mean')::FLOAT)
 			FROM crdb_internal.statement_statistics
 			WHERE metadata @> '{"db":"kv","failed":false}' AND metadata @> $1`, querySelector)
 
-		if rows.Next() {
-			var cnt, lat float64
-			err := rows.Scan(&cnt, &lat)
-			require.NoError(t, err)
-			counts[i] = cnt
-			meanLatencies[i] = lat
-		} else {
-			t.Fatal("no query results")
-		}
+	if rows.Next() {
+		var cnt, lat float64
+		err := rows.Scan(&cnt, &lat)
+		require.NoError(t, err)
+		counts[i] = cnt
+		meanLatencies[i] = lat
+	} else {
+		t.Fatal("no query results")
 	}
 
 	failThreshold := .3
@@ -698,8 +714,9 @@ func registerTPCCQoSBackgroundOLAPSpec(r registry.Registry, s tpccQoSBackgroundO
 func registerTPCCQoSBackgroundOLAP(r registry.Registry) {
 	specs := []tpccQoSBackgroundOLAPSpec{
 		{
+			name:            "baseline",
 			CPUs:            32,
-			Concurrency:     256,
+			Concurrency:     500,
 			OLAPConcurrency: 64,
 			Nodes:           3,
 			Warehouses:      1,
