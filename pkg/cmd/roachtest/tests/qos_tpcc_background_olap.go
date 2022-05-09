@@ -12,7 +12,6 @@ package tests
 
 import (
 	"context"
-	gosql "database/sql"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -45,7 +44,6 @@ type tpccQoSBackgroundOLAPSpec struct {
 	Ramp            time.Duration
 	numRuns         int
 
-	acEnabled   bool
 	readPercent int
 	blockSize   int
 	duration    time.Duration
@@ -65,7 +63,7 @@ type mtFairnessSpec struct {
 	maxLoadOps  int
 }
 
-func registerMultiTenantFairness(r registry.Registry) {
+func registerTPCCQoSBackgroundOLAP(r registry.Registry) {
 	acStr := map[bool]string{
 		true:  "admission",
 		false: "no-admission",
@@ -74,86 +72,85 @@ func registerMultiTenantFairness(r registry.Registry) {
 		kvSpecs := []tpccQoSBackgroundOLAPSpec{
 			{
 				name:        "same",
-				concurrency: func(int) int { return 250 },
+				Concurrency: 250,
 			},
 			{
 				name:        "concurrency-skew",
-				concurrency: func(i int) int { return i * 250 },
+				Concurrency: 250,
 			},
 		}
 		for i := range kvSpecs {
 			s := kvSpecs[i]
 			s.blockSize = 5
 			s.readPercent = 95
-			s.acEnabled = acEnabled
 			s.duration = 5 * time.Minute
 			s.batchSize = 100
 			s.maxLoadOps = 100_000
 
+			s.getArtifactsPath()
 			r.Add(registry.TestSpec{
-				Name:              fmt.Sprintf("multitenant/fairness/kv/%s/%s", s.name, acStr[s.acEnabled]),
-				Cluster:           r.MakeClusterSpec(5),
+				Name:              s.getArtifactsPath(),
+				Cluster:           r.MakeClusterSpec(s.Nodes),
 				Owner:             registry.OwnerSQLQueries,
 				NonReleaseBlocker: false,
 				Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
-					runMultiTenantFairness(ctx, t, c, s, "SELECT k, v FROM kv")
+					runQoSKV(ctx, t, c, s, "SELECT k, v FROM kv")
 				},
 			})
 		}
-		storeSpecs := []mtFairnessSpec{
+		storeSpecs := []tpccQoSBackgroundOLAPSpec{
 			{
-				name:        "same",
-				concurrency: func(i int) int { return 50 },
+				name:        "noQoS",
+				Concurrency: 250,
 			},
 			{
-				name:        "concurrency-skew",
-				concurrency: func(i int) int { return i * 50 },
+				name:        "QoS",
+				Concurrency: 250,
 			},
 		}
 		for i := range storeSpecs {
 			s := storeSpecs[i]
 			s.blockSize = 50_000
 			s.readPercent = 5
-			s.acEnabled = acEnabled
 			s.duration = 10 * time.Minute
 			s.batchSize = 1
 			s.maxLoadOps = 1000
 
 			r.Add(registry.TestSpec{
-				Name:              fmt.Sprintf("multitenant/fairness/store/%s/%s", s.name, acStr[s.acEnabled]),
+				Name: fmt.Sprintf("qos/tpcc_background_olap/%s/nodes=%d/cpu=%d/w=%d/c=%d",
+					s.name, s.Nodes, s.CPUs, s.Warehouses, s.Concurrency),
 				Cluster:           r.MakeClusterSpec(5),
 				Owner:             registry.OwnerSQLQueries,
 				NonReleaseBlocker: false,
 				Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
-					runMultiTenantFairness(ctx, t, c, s, "UPSERT INTO kv(k, v)")
+					runQoSKV(ctx, t, c, s, "UPSERT INTO kv(k, v)")
 				},
 			})
 		}
 	}
 	if buildutil.CrdbTestBuild {
-		quick := mtFairnessSpec{
+		quick := tpccQoSBackgroundOLAPSpec{
 			duration:    1,
-			acEnabled:   false,
 			readPercent: 95,
 			name:        "quick",
-			concurrency: func(i int) int { return 1 },
+			Concurrency: 1,
 			blockSize:   2,
 			batchSize:   10,
 			maxLoadOps:  1000,
 		}
 		r.Add(registry.TestSpec{
-			Name:              "multitenant/fairness/quick",
+			Name:              "qos/tpcc_background_olap/quick",
 			Cluster:           r.MakeClusterSpec(2),
 			Owner:             registry.OwnerSQLQueries,
 			NonReleaseBlocker: false,
 			Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
-				runMultiTenantFairness(ctx, t, c, quick, "SELECT k, v FROM kv")
+				runQoSKV(ctx, t, c, quick, "SELECT k, v FROM kv")
 			},
 		})
 	}
 }
 
-func runMultiTenantFairness(
+func runQoSKV(
 	ctx context.Context, t test.Test, c cluster.Cluster, s tpccQoSBackgroundOLAPSpec, query string,
 ) {
 	numNodes := c.Spec().NodeCount - 1
@@ -242,18 +239,20 @@ func runMultiTenantFairness(
 	m.Wait()
 	t.L().Printf("workloads done")
 
-	// Pull workload performance from crdb_internal.statement_statistics. Alternatively we could pull these from
-	// workload but this seemed most straightforward.
-	var counts float64
-	var meanLatency float64
+	// Pull workload performance from crdb_internal.statement_statistics.
+	// Alternatively we could pull these from workload but this seemed most
+	// straightforward.
+	//var counts float64
+	//var meanLatency float64
 	counts := make([]float64, numNodes)
 	meanLatencies := make([]float64, numNodes)
 
-	db, err := gosql.Open("postgres", tenants[i].pgURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = db.Close() }()
+	db := c.Conn(ctx, t.L(), 1)
+	defer db.Close()
+
 	tdb := sqlutils.MakeSQLRunner(db)
 	tdb.Exec(t, "USE kv")
 	querySelector := fmt.Sprintf(`{"querySummary": "%s"}`, query)
@@ -277,13 +276,13 @@ func runMultiTenantFairness(
 
 	failThreshold := .3
 
-	throughput := make([]float64, numTenants)
+	throughput := make([]float64, numNodes)
 	ok, maxThroughputDelta := floatsWithinPercentage(counts, failThreshold)
 	for i, count := range counts {
 		throughput[i] = count / duration.Seconds()
 	}
 
-	if s.acEnabled && !ok {
+	if !ok {
 		t.L().Printf("Throughput not within expectations: %f > %f %v", maxThroughputDelta, failThreshold, throughput)
 	}
 
@@ -292,7 +291,7 @@ func runMultiTenantFairness(
 	ok, maxLatencyDelta := floatsWithinPercentage(meanLatencies, failThreshold)
 	t.L().Printf("Max latency delta: %d%% %v\n", int(maxLatencyDelta*100), meanLatencies)
 
-	if s.acEnabled && !ok {
+	if !ok {
 		t.L().Printf("Latency not within expectations: %f > %f %v", maxLatencyDelta, failThreshold, meanLatencies)
 	}
 
@@ -696,8 +695,8 @@ func printOneResult(res *tpcc.Result, t test.Test) {
 }
 
 func (s tpccQoSBackgroundOLAPSpec) getArtifactsPath() string {
-	return fmt.Sprintf("qos/tpcc_background_olap/nodes=%d/cpu=%d/w=%d/c=%d",
-		s.Nodes, s.CPUs, s.Warehouses, s.Concurrency)
+	return fmt.Sprintf("qos/tpcc_background_olap/%s/nodes=%d/cpu=%d/w=%d/c=%d",
+		s.name, s.Nodes, s.CPUs, s.Warehouses, s.Concurrency)
 }
 
 func registerTPCCQoSBackgroundOLAPSpec(r registry.Registry, s tpccQoSBackgroundOLAPSpec) {
