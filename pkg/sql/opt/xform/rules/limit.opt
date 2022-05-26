@@ -35,26 +35,6 @@
 =>
 (Scan (LimitScanPrivate $scanPrivate $limit $ordering))
 
-# PushLimitIntoIndexJoin pushes a limit through an index join. Since index
-# lookup can be expensive, it's always better to discard rows beforehand.
-#
-# TODO(radu): we can similarly push Offset too.
-[PushLimitIntoIndexJoin, Explore]
-(Limit
-    (IndexJoin $input:* $indexJoinPrivate:*)
-    $limitExpr:(Const $limit:* & (IsPositiveInt $limit))
-    $ordering:* &
-        (OrderingCanProjectCols
-            $ordering
-            $cols:(OutputCols $input)
-        )
-)
-=>
-(IndexJoin
-    (Limit $input $limitExpr (PruneOrdering $ordering $cols))
-    $indexJoinPrivate
-)
-
 # SplitLimitedScanIntoUnionScans splits a non-inverted scan under a limit into a
 # union-all of limited scans over disjoint intervals. Example:
 #

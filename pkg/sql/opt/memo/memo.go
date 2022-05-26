@@ -480,3 +480,11 @@ func (m *Memo) Detach() {
 func (m *Memo) DisableCheckExpr() {
 	m.disableCheckExpr = true
 }
+
+func (m *Memo) BuildIndexJoinProps(indexJoin *IndexJoinExpr) {
+	grp := &indexJoinGroup{mem: m, first: *indexJoin}
+	e := &grp.first
+	e.grp = grp
+	m.logPropsBuilder.buildIndexJoinProps(indexJoin, &grp.rel)
+	grp.rel.Populated = true
+}

@@ -282,8 +282,16 @@ func (b *indexScanBuilder) Build(grp memo.RelExpr) {
 	// 5. Wrap input in index join if it was added.
 	if b.hasIndexJoin() {
 		if !b.hasOuterFilters() {
-			indexJoin := &memo.IndexJoinExpr{Input: input, IndexJoinPrivate: b.indexJoinPrivate}
-			b.mem.AddIndexJoinToGroup(indexJoin, grp)
+			//indexJoin := &memo.IndexJoinExpr{Input: input, IndexJoinPrivate: b.indexJoinPrivate}
+			//b.mem.BuildIndexJoinProps(indexJoin)
+			//*grp.Relational() = *indexJoin.Relational()
+			//b.mem.AddIndexJoinToGroup(indexJoin, grp)
+			indexJoin := b.f.ConstructIndexJoin(input, &b.indexJoinPrivate)
+			b.mem.AddSelectToGroup(&memo.SelectExpr{Input: indexJoin}, grp)
+			//b.mem.AddIndexJoinToGroup(indexJoin, grp)
+			//if interned == indexJoin {
+			//	b.mem.BuildIndexJoinProps(indexJoin)
+			//}
 			return
 		}
 
