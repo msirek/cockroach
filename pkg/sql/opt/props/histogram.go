@@ -372,6 +372,32 @@ func (h *Histogram) InvertedFilter(spans inverted.Spans) *Histogram {
 	)
 }
 
+// WindowsStats builds a histogram describing the output rows for applying a
+// given window function with target column `windowColID` on an input relation
+// having `inputRowCount` rows and number of distinct values
+// `inputDistinctCount` in the PARTITION BY clause columns.
+func (h *Histogram) WindowStats(
+	evalCtx *eval.Context,
+	inputRowCount float64,
+	inputDistinctCount float64,
+	windowColID opt.ColumnID,
+) *Histogram {
+	newHisto := &Histogram{}
+	newHisto.Init(evalCtx, windowColID, make([]cat.HistogramBucket, 0, 2))
+
+	newHisto.addEmptyBucket(tree.NewDInt(tree.DInt(0)), false)
+	numValues := math.Round(inputRowCount / inputDistinctCount)
+
+	bucket := &cat.HistogramBucket{
+		NumEq:         0,
+		NumRange:      inputRowCount,
+		DistinctRange: numValues,
+		UpperBound:    tree.NewDInt(tree.DInt(int64(numValues))),
+	}
+	newHisto.addBucket(bucket, false)
+	return newHisto
+}
+
 func makeSpanFromInvertedSpan(invSpan inverted.Span) *constraint.Span {
 	var span constraint.Span
 	// The statistics use the Bytes type for the encoded key, so we use DBytes

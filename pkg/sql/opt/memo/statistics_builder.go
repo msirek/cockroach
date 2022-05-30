@@ -736,6 +736,10 @@ func (sb *statisticsBuilder) buildScan(scan *ScanExpr, relProps *props.Relationa
 	s.Available = sb.availabilityFromInput(scan)
 
 	inputStats := sb.makeTableStatistics(scan.Table)
+	if inputStats.RowCount == 100000 {
+		i := 0
+		i++ // msirek-temp
+	}
 	s.RowCount = inputStats.RowCount
 	pred := scan.PartialIndexPredicate(sb.md)
 
@@ -926,6 +930,10 @@ func (sb *statisticsBuilder) colStatScan(colSet opt.ColSet, scan *ScanExpr) *pro
 	s := &relProps.Stats
 
 	inputColStat := sb.colStatTable(scan.Table, colSet)
+	if inputColStat.DistinctCount == 100000 {
+		i := 0
+		i++ // msirek-temp
+	}
 	colStat := sb.copyColStat(colSet, s, inputColStat)
 
 	if sb.shouldUseHistogram(relProps) {
@@ -958,6 +966,10 @@ func (sb *statisticsBuilder) buildSelect(sel *SelectExpr, relProps *props.Relati
 	s.Available = sb.availabilityFromInput(sel)
 	inputStats := &sel.Input.Relational().Stats
 	s.RowCount = inputStats.RowCount
+	if inputStats.RowCount == 100000 {
+		i := 0
+		i++ // msirek-temp
+	}
 
 	sb.filterRelExpr(sel.Filters, sel, relProps.NotNullCols, relProps, s, &sel.Input.Relational().FuncDeps)
 
@@ -2293,7 +2305,49 @@ func (sb *statisticsBuilder) buildWindow(window *WindowExpr, relProps *props.Rel
 	}
 	s.Available = sb.availabilityFromInput(window)
 
-	inputStats := &window.Input.Relational().Stats
+	var inputStats *props.Statistics
+	var colStat *props.ColumnStatistic
+
+	//partitionFirstColID, ok := window.WindowPrivate.Partition.Next(0)
+
+	if s.Available && !window.WindowPrivate.Partition.Empty() {
+		colStat, inputStats = sb.colStatFromInput(window.WindowPrivate.Partition, window.Input)
+
+		//for _, w := range window.Windows {
+		//	newHisto := &props.Histogram{}
+		//	newHisto = newHisto.WindowStats(
+		//		sb.evalCtx, inputStats.RowCount,
+		//		colStat.DistinctCount, w.Col,
+		//	)
+		//
+		//	//
+		//	newColStat, _ := s.ColStats.Add(window.WindowPrivate.Partition)
+		//	newColStat.DistinctCount = newHisto.ValuesCount()
+		//	newColStat.AvgSize = float64(w.Typ.Size())
+		//	newColStat.Histogram = newHisto
+		//	//
+		//	//newHisto.addBucket(bucket, false)
+		//}
+		if inputHist := colStat.Histogram; inputHist != nil {
+			// If we have a histogram, set the row count to its total, unfiltered
+			// count. This is needed because s.RowCount is currently the row count
+			// of the table, but should instead reflect the number of inverted index
+			// entries. (Make sure the row count is at least 1. The stats may be
+			// stale, and we can end up with weird and inefficient plans if we
+			// estimate 0 rows.)
+			//fmt.Println(inputHist)
+			//s.RowCount = max(inputHist.ValuesCount(), 1)
+			//if colStat, ok := s.ColStats.Lookup(colSet); ok {
+			//	colStat.Histogram = inputHist.InvertedFilter(scan.InvertedConstraint)
+			//	histCols.Add(invertedConstrainedCol)
+			//	sb.updateDistinctCountFromHistogram(colStat, inputStat.DistinctCount)
+			//}
+		}
+	} else {
+		inputStats = &window.Input.Relational().Stats
+	}
+
+	//inputStats := &window.Input.Relational().Stats
 
 	// The row count of a window is equal to the row count of its input.
 	s.RowCount = inputStats.RowCount
@@ -2310,8 +2364,26 @@ func (sb *statisticsBuilder) colStatWindow(
 	colStat, _ := s.ColStats.Add(colSet)
 
 	var windowCols opt.ColSet
+	var inputStats *props.Statistics
+	var inputColStat *props.ColumnStatistic
+
+	//partitionFirstColID, ok := window.WindowPrivate.Partition.Next(0)
+
+	if s.Available && !window.WindowPrivate.Partition.Empty() {
+		inputColStat, inputStats = sb.colStatFromInput(window.WindowPrivate.Partition, window.Input)
+	}
 	for _, w := range window.Windows {
 		windowCols.Add(w.Col)
+		newHisto := &props.Histogram{}
+		newHisto = newHisto.WindowStats(
+			sb.evalCtx, inputStats.RowCount,
+			inputColStat.DistinctCount, w.Col,
+		)
+
+		//
+		colStat.DistinctCount = newHisto.ValuesCount()
+		colStat.AvgSize = float64(w.Typ.Size())
+		colStat.Histogram = newHisto
 	}
 
 	if colSet.Intersects(windowCols) {
@@ -3016,6 +3088,11 @@ func (sb *statisticsBuilder) applyFilters(
 		filters = append(filters, t.ConstFilters...)
 	case *InvertedJoinExpr:
 		filters = append(filters, t.ConstFilters...)
+	}
+
+	if relProps.Stats.RowCount == 100000 {
+		i := 0
+		i++ // msirek-temp
 	}
 
 	for i := range filters {
@@ -3933,6 +4010,10 @@ func (sb *statisticsBuilder) selectivityFromSingleColDistinctCounts(
 		}
 
 		inputColStat, inputStats := sb.colStatFromInput(colStat.Cols, e)
+		if inputStats.RowCount == 100000 {
+			i := 0
+			i++ // msirek-temp
+		}
 		predicateSelectivity := sb.selectivityFromDistinctCount(colStat, inputColStat, inputStats.RowCount)
 
 		// The maximum possible selectivity of the entire expression is the minimum
