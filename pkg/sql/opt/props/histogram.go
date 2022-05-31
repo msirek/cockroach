@@ -375,26 +375,59 @@ func (h *Histogram) InvertedFilter(spans inverted.Spans) *Histogram {
 // WindowsStats builds a histogram describing the output rows for applying a
 // given window function with target column `windowColID` on an input relation
 // having `inputRowCount` rows and number of distinct values
-// `inputDistinctCount` in the PARTITION BY clause columns.
+// `inputDistinctCount` in the PARTITION BY clause columns. If stats buckets
+// exist on the PARTITION BY columns, they are passed in via `inputHistogram`.
 func (h *Histogram) WindowStats(
 	evalCtx *eval.Context,
 	inputRowCount float64,
 	inputDistinctCount float64,
 	windowColID opt.ColumnID,
+	inputHistogram *Histogram,
 ) *Histogram {
 	newHisto := &Histogram{}
-	newHisto.Init(evalCtx, windowColID, make([]cat.HistogramBucket, 0, 2))
+	numBucketsToAllocate := 2
+	if inputHistogram != nil {
+		numBucketsToAllocate = len(inputHistogram.buckets)
+	}
+	newHisto.Init(evalCtx, windowColID, make([]cat.HistogramBucket, 0, numBucketsToAllocate))
 
 	newHisto.addEmptyBucket(tree.NewDInt(tree.DInt(0)), false)
 	numValues := math.Round(inputRowCount / inputDistinctCount)
-
-	bucket := &cat.HistogramBucket{
-		NumEq:         0,
-		NumRange:      inputRowCount,
-		DistinctRange: numValues,
-		UpperBound:    tree.NewDInt(tree.DInt(int64(numValues))),
+	if inputHistogram != nil {
+		for _, inputBucket := range inputHistogram.buckets {
+			if inputBucket.NumRange != 0 && inputBucket.DistinctRange != 0 {
+				numValues = math.Round(inputBucket.NumRange / inputBucket.DistinctRange)
+				bucket := &cat.HistogramBucket{
+					NumEq:         0,
+					NumRange:      inputBucket.NumRange,
+					DistinctRange: numValues,
+					UpperBound:    tree.NewDInt(tree.DInt(int64(numValues))),
+				}
+				newHisto.addBucket(bucket, false)
+			}
+			//if inputBucket.NumEq != 0 {
+			//	// The rank function is incremented for each row in the UpperBound
+			//	// group, so the number of values of the rank function is equal to the
+			//	// number of matching rows.
+			//	numValues = inputBucket.NumEq
+			//	bucket := &cat.HistogramBucket{
+			//		NumEq:         0,
+			//		NumRange:      inputBucket.NumEq,
+			//		DistinctRange: numValues,
+			//		UpperBound:    tree.NewDInt(tree.DInt(int64(numValues))),
+			//	}
+			//	newHisto.addBucket(bucket, false)
+			//}
+		}
+	} else {
+		bucket := &cat.HistogramBucket{
+			NumEq:         0,
+			NumRange:      inputRowCount,
+			DistinctRange: numValues,
+			UpperBound:    tree.NewDInt(tree.DInt(int64(numValues))),
+		}
+		newHisto.addBucket(bucket, false)
 	}
-	newHisto.addBucket(bucket, false)
 	return newHisto
 }
 

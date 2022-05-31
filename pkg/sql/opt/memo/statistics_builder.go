@@ -11,6 +11,7 @@
 package memo
 
 import (
+	"fmt"
 	"math"
 	"reflect"
 
@@ -2365,19 +2366,32 @@ func (sb *statisticsBuilder) colStatWindow(
 
 	var windowCols opt.ColSet
 	var inputStats *props.Statistics
-	var inputColStat *props.ColumnStatistic
+	var groupingColStat *props.ColumnStatistic
 
 	//partitionFirstColID, ok := window.WindowPrivate.Partition.Next(0)
 
-	if s.Available && !window.WindowPrivate.Partition.Empty() {
-		inputColStat, inputStats = sb.colStatFromInput(window.WindowPrivate.Partition, window.Input)
+	var inputHistogram *props.Histogram
+	inputRowCount := s.RowCount
+	// If no PARTITION BY clause, this means we have one row per group, and for
+	// functions like the rank function, there is only a single value.
+	distinctCount := float64(1)
+	if s.Available && !window.WindowPrivate.Partition.Empty() && len(window.WindowPrivate.Ordering.Columns) > 0 {
+		orderingColStat, _ := sb.colStatFromInput(window.WindowPrivate.Ordering.Columns[0].Group, window.Input)
+		fmt.Println(orderingColStat)
+		groupingColStat, inputStats = sb.colStatFromInput(window.WindowPrivate.Partition, window.Input)
+		combinedColStat, _ := sb.colStatFromInput(window.WindowPrivate.Partition.Union(window.WindowPrivate.Ordering.Columns[0].Group), window.Input)
+		fmt.Println(combinedColStat)
+		inputHistogram = groupingColStat.Histogram
+		inputRowCount = inputStats.RowCount
+		distinctCount = groupingColStat.DistinctCount
 	}
+
 	for _, w := range window.Windows {
 		windowCols.Add(w.Col)
+
 		newHisto := &props.Histogram{}
 		newHisto = newHisto.WindowStats(
-			sb.evalCtx, inputStats.RowCount,
-			inputColStat.DistinctCount, w.Col,
+			sb.evalCtx, inputRowCount, distinctCount, w.Col, inputHistogram,
 		)
 
 		//

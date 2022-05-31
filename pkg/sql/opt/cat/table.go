@@ -197,7 +197,7 @@ type TableStatistic interface {
 // that NumEq, NumRange, and DistinctRange are floats so the statisticsBuilder
 // can apply filters to the histogram.
 type HistogramBucket struct {
-	// NumEq is the estimated number of values equal to UpperBound.
+	// NumEq is the estimated number of rows equal to UpperBound.
 	NumEq float64
 
 	// NumRange is the estimated number of values between the upper bound of the
