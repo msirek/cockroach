@@ -55,6 +55,11 @@ import (
 
 const retryCount = 20
 
+// maxExpressionDepth is the maximum depth of nested query expressions (query
+// blocks) the Smither is allowed to create (to prevent stack overflows and long
+// query compilation times).
+const maxExpressionDepth = 100
+
 // Smither is a sqlsmith generator.
 type Smither struct {
 	rnd              *rand.Rand
@@ -78,16 +83,24 @@ type Smither struct {
 	scalarExprWeights, boolExprWeights []scalarExprWeight
 	scalarExprSampler, boolExprSampler *scalarExprSampler
 
-	disableWith        bool
-	disableImpureFns   bool
-	disableLimits      bool
-	disableWindowFuncs bool
-	simpleDatums       bool
-	avoidConsts        bool
-	outputSort         bool
-	postgres           bool
-	ignoreFNs          []*regexp.Regexp
-	complexity         float64
+	disableWith                bool
+	disableImpureFns           bool
+	disableLimits              bool
+	disableWindowFuncs         bool
+	simpleDatums               bool
+	avoidConsts                bool
+	outputSort                 bool
+	postgres                   bool
+	ignoreFNs                  []*regexp.Regexp
+	complexity                 float64
+	scalarComplexity           float64
+	expressionDepth            int
+	disableIndexHints          bool
+	disableCrossJoins          bool
+	disableRandomNulls         bool
+	disableConstantWhereClause bool
+	inWhereClause              bool
+	favorInterestingData       bool
 
 	bulkSrv     *httptest.Server
 	bulkFiles   map[string][]byte
@@ -117,7 +130,8 @@ func NewSmither(db *gosql.DB, rnd *rand.Rand, opts ...SmitherOption) (*Smither, 
 		scalarExprWeights: scalars,
 		boolExprWeights:   bools,
 
-		complexity: 0.2,
+		complexity:       0.2,
+		scalarComplexity: 0.2,
 	}
 	for _, opt := range opts {
 		opt.Apply(s)
@@ -140,6 +154,21 @@ func NewSmither(db *gosql.DB, rnd *rand.Rand, opts ...SmitherOption) (*Smither, 
 func (s *Smither) Close() {
 	if s.bulkSrv != nil {
 		s.bulkSrv.Close()
+	}
+}
+
+// EnterExpressionBlock records when we are entering a nested query expression
+// block.
+func (s *Smither) EnterExpressionBlock() {
+	s.expressionDepth++
+}
+
+// LeaveExpressionBlock records when we are leaving a nested query expression
+// block.
+func (s *Smither) LeaveExpressionBlock() {
+	s.expressionDepth--
+	if s.expressionDepth < 0 {
+		panic("Smither query block nesting level tracking error")
 	}
 }
 
@@ -241,8 +270,20 @@ var DisableMutations = simpleOption("disable mutations", func(s *Smither) {
 
 // SetComplexity configures the Smither's complexity, in other words the
 // likelihood that at any given node the Smither will recurse and create a
-// deeper query true. The default is .2.
+// deeper query tree. The default is .2.
 func SetComplexity(complexity float64) SmitherOption {
+	return option{
+		name: "set complexity (likelihood of making a deeper random tree)",
+		apply: func(s *Smither) {
+			s.complexity = complexity
+		},
+	}
+}
+
+// SetScalarComplexity configures the Smither's scalar complexity, in other
+// words the likelihood that within any given scalar expression the Smither will
+// recurse and create a deeper nested expression. The default is .2.
+func SetScalarComplexity(complexity float64) SmitherOption {
 	return option{
 		name: "set complexity (likelihood of making a deeper random tree)",
 		apply: func(s *Smither) {
@@ -296,6 +337,35 @@ var DisableWith = simpleOption("disable WITH", func(s *Smither) {
 // DisableImpureFns causes the Smither to disable impure functions.
 var DisableImpureFns = simpleOption("disable impure funcs", func(s *Smither) {
 	s.disableImpureFns = true
+})
+
+// DisableIndexHints causes the Smither to disable index hints.
+var DisableIndexHints = simpleOption("disable index hints", func(s *Smither) {
+	s.disableIndexHints = true
+})
+
+// DisableCrossJoins causes the Smither to disable cross joins.
+var DisableCrossJoins = simpleOption("disable cross joins", func(s *Smither) {
+	s.disableIndexHints = true
+})
+
+// DisableRandomNulls causes the Smither to disable randomly generating NULL
+// scalar values.
+var DisableRandomNulls = simpleOption("disable random nulls", func(s *Smither) {
+	s.disableRandomNulls = true
+})
+
+// DisableConstantWhereClause causes the Smither to disable generating WHERE
+// clauses in the form `WHERE TRUE` or `WHERE FALSE`.
+var DisableConstantWhereClause = simpleOption("disable constant where clause", func(s *Smither) {
+	s.disableConstantWhereClause = true
+})
+
+// FavorInterestingData causes the Smither favor generation of scalar data from
+// a predetermined set of interesting values, as opposed to purely random
+// values.
+var FavorInterestingData = simpleOption("favor interesting data", func(s *Smither) {
+	s.favorInterestingData = true
 })
 
 // DisableCRDBFns causes the Smither to disable crdb_internal functions.

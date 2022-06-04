@@ -1913,6 +1913,9 @@ func typeCheckAndRequire(
 		return nil, err
 	}
 	if typ := typedExpr.ResolvedType(); !(typ.Family() == types.UnknownFamily || typ.Equivalent(required)) {
+		if required.Family() == types.VoidFamily && typ.Family() == types.StringFamily {
+			return DVoidDatum, nil
+		}
 		return nil, pgerror.Newf(pgcode.DatatypeMismatch, "incompatible %s type: %s", op, typ)
 	}
 	return typedExpr, nil

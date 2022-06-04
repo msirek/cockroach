@@ -45,7 +45,8 @@ func RandDatum(rng *rand.Rand, typ *types.T, nullOk bool) tree.Datum {
 	if !nullOk {
 		nullDenominator = 0
 	}
-	return RandDatumWithNullChance(rng, typ, nullDenominator)
+	return RandDatumWithNullChance(rng, typ, nullDenominator,
+		false /* favorInterestingData */)
 }
 
 // RandDatumWithNullChance generates a random Datum of the given type.
@@ -53,14 +54,20 @@ func RandDatum(rng *rand.Rand, typ *types.T, nullOk bool) tree.Datum {
 // denominator. For example, a nullChance of 5 means that there's a 1/5 chance
 // that DNull will be returned. A nullChance of 0 means that DNull will not
 // be returned.
-// Note that if typ.Family is UNKNOWN, the datum will always be
-// DNull, regardless of the null flag.
-func RandDatumWithNullChance(rng *rand.Rand, typ *types.T, nullChance int) tree.Datum {
+// Note that if typ.Family is UNKNOWN, the datum will always be DNull,
+// regardless of the null flag. If favorInterestingData is true, selection of
+// data values is highly biased towards randomly picking from a pre-determined
+// set of interesting values as opposed to purely random values.
+func RandDatumWithNullChance(
+	rng *rand.Rand, typ *types.T, nullChance int, favorInterestingData bool,
+) tree.Datum {
 	if nullChance != 0 && rng.Intn(nullChance) == 0 {
 		return tree.DNull
 	}
 	// Sometimes pick from a predetermined list of known interesting datums.
-	if rng.Intn(10) == 0 {
+	randomInt := rng.Intn(10)
+	if (favorInterestingData && randomInt < 9) ||
+		randomInt == 0 {
 		if special := randInterestingDatum(rng, typ); special != nil {
 			return special
 		}
@@ -225,7 +232,8 @@ func RandDatumWithNullChance(rng *rand.Rand, typ *types.T, nullChance int) tree.
 	case types.ArrayFamily:
 		return RandArray(rng, typ, 0)
 	case types.AnyFamily:
-		return RandDatumWithNullChance(rng, RandType(rng), nullChance)
+		return RandDatumWithNullChance(rng, RandType(rng), nullChance,
+			false /* favorInterestingData */)
 	case types.EnumFamily:
 		// If the input type is not hydrated with metadata, or doesn't contain
 		// any enum values, then return NULL.
@@ -258,7 +266,8 @@ func RandArray(rng *rand.Rand, typ *types.T, nullChance int) tree.Datum {
 	}
 	arr := tree.NewDArray(contents)
 	for i := 0; i < rng.Intn(10); i++ {
-		if err := arr.Append(RandDatumWithNullChance(rng, contents, nullChance)); err != nil {
+		if err := arr.Append(RandDatumWithNullChance(rng, contents, nullChance,
+			false /* favorInterestingData */)); err != nil {
 			panic(err)
 		}
 	}

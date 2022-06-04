@@ -365,6 +365,10 @@ type ScanFlags struct {
 	Direction   tree.Direction
 	Index       int
 
+	// AllowNonCoveringIndexScan allows GenerateIndexScans to explore index access
+	// paths which are non-covering.
+	AllowNonCoveringIndexScan bool
+
 	// ZigzagIndexes makes planner prefer a zigzag with particular indexes.
 	// ForceZigzag must also be true.
 	ZigzagIndexes util.FastIntSet

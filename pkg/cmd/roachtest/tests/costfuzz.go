@@ -146,11 +146,17 @@ func runOneRoundCostFuzz(
 	// Initialize a smither that generates only deterministic SELECT statements.
 	smither, err := sqlsmith.NewSmither(conn, rnd,
 		sqlsmith.DisableMutations(), sqlsmith.DisableImpureFns(), sqlsmith.DisableLimits(),
-		sqlsmith.SetComplexity(.3),
+		sqlsmith.DisableIndexHints(), sqlsmith.DisableCrossJoins(), sqlsmith.DisableRandomNulls(),
+		sqlsmith.DisableConstantWhereClause(), sqlsmith.FavorInterestingData(),
+		sqlsmith.SetComplexity(.8), // msirek-temp
+		sqlsmith.SetScalarComplexity(.3),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	_, _ = conn.Query("SET cluster setting sql.optimizer.uniqueness_checks_for_gen_random_uuid.enabled = true")
+
 	defer smither.Close()
 
 	t.Status("running costfuzz")
@@ -169,10 +175,10 @@ func runOneRoundCostFuzz(
 			t.Status("running costfuzz: ", i, " statements completed")
 		}
 
-		// Run 1000 mutations first so that the tables have rows. Run a mutation for
+		// Run 3000 mutations first so that the tables have rows. Run a mutation for
 		// a tenth of the iterations after that to continually change the state of
 		// the database.
-		if i < 1000 || i%10 == 0 {
+		if i < 3000 || i%10 == 0 { // msirek-temp
 			runMutationStatement(conn, mutatingSmither, logStmt)
 			continue
 		}
