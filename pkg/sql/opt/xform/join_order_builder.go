@@ -11,6 +11,7 @@
 package xform
 
 import (
+	"fmt"
 	"math"
 	"math/bits"
 
@@ -591,9 +592,30 @@ func (jb *JoinOrderBuilder) makeInnerEdge(op *operator, filters memo.FiltersExpr
 		jb.innerEdges.Add(len(jb.edges) - 1)
 		return
 	}
+	numFilters := len(filters)
+	if numFilters > 1 {
+		fmt.Println(numFilters)
+	}
+	// A map from the set of relations referenced to the corresponding filters.
+	var filterMap map[vertexSet]memo.FiltersExpr
+	filterMap = make(map[vertexSet]memo.FiltersExpr, len(filters))
 	for i := range filters {
+		filterSlice := filters[i : i+1]
+		rels := getFilterRels(filterSlice, jb)
+		var filtersExpr memo.FiltersExpr
+		var ok bool
+		if filtersExpr, ok = filterMap[rels]; ok {
+			filtersExpr = append(filtersExpr, filterSlice...)
+			filterMap[rels] = filtersExpr
+		} else {
+			filtersExpr = make(memo.FiltersExpr, 0, 1)
+			filtersExpr = append(filtersExpr, filterSlice...)
+		}
+		filterMap[rels] = filtersExpr
+	}
+	for _, conjuncts := range filterMap {
 		// Create an edge for each conjunct.
-		jb.edges = append(jb.edges, *jb.makeEdge(op, filters[i:i+1]))
+		jb.edges = append(jb.edges, *jb.makeEdge(op, conjuncts))
 		jb.innerEdges.Add(len(jb.edges) - 1)
 	}
 }
@@ -1081,13 +1103,18 @@ func (e *edge) calcNullRejectedRels(jb *JoinOrderBuilder) {
 //
 // While still satisfying the syntactic eligibility sets of the edges.
 func (e *edge) calcSES(jb *JoinOrderBuilder) {
-	// Get the columns referenced by the predicate.
-	freeVars := jb.getFreeVars(e.filters)
-
 	// Add all relations referenced by the predicate to the SES vertexSet.
 	// Columns that do not come from a base relation (outer to the join tree) will
 	// be treated as constant, and therefore will not be referenced in the SES.
-	e.ses = jb.getRelations(freeVars)
+	e.ses = getFilterRels(e.filters, jb)
+}
+
+// getFilterRels finds the set of relations referenced in filters.
+func getFilterRels(filters memo.FiltersExpr, jb *JoinOrderBuilder) (rels vertexSet) {
+	// Get the columns referenced by the predicate.
+	freeVars := jb.getFreeVars(filters)
+	rels = jb.getRelations(freeVars)
+	return rels
 }
 
 // calcTES initializes the total eligibility set of this edge using the

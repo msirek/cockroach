@@ -12,6 +12,7 @@ package memo
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"math/rand"
 	"reflect"
@@ -653,6 +654,9 @@ func (h *hasher) HashRelExpr(val RelExpr) {
 }
 
 func (h *hasher) HashScalarExpr(val opt.ScalarExpr) {
+	if val == nil {
+		fmt.Println("ugh") // msirek-temp
+	}
 	h.HashUint64(uint64(reflect.ValueOf(val).Pointer()))
 }
 

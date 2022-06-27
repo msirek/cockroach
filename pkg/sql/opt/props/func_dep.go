@@ -630,8 +630,15 @@ func (f *FuncDepSet) ConstantCols() opt.ColSet {
 func (f *FuncDepSet) ReduceCols(cols opt.ColSet) opt.ColSet {
 	var removed opt.ColSet
 	cols = cols.Copy()
+	var temp opt.ColSet
 	for i, ok := cols.Next(0); ok; i, ok = cols.Next(i + 1) {
+		temp.Add(i) // msirek-temp
 		cols.Remove(i)
+		if i == 221 {
+			j := 0
+			j++ // msirek-temp
+			fmt.Println(temp.Next(0))
+		}
 		removed.Add(i)
 		if !f.inClosureOf(removed, cols, true /* strict */) {
 			// The column is not functionally determined by the other columns, so

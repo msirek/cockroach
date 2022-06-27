@@ -1755,7 +1755,7 @@ func (ot *OptTester) ExploreTrace() (string, error) {
 	et := newExploreTracer(ot)
 
 	for step := 0; ; step++ {
-		if step > 2000 {
+		if step > 200000 {
 			ot.output("step limit reached\n")
 			break
 		}
@@ -1776,21 +1776,24 @@ func (ot *OptTester) ExploreTrace() (string, error) {
 			continue
 		}
 
-		if ot.builder.Len() > 0 {
-			ot.output("\n")
+		//if ot.builder.Len() > 0 {
+		//	ot.output("\n")
+		//}
+		//ot.separator("=")
+		ruleName := et.LastRuleName()
+		if len(newNodes) > 0 && !strings.Contains(ruleName.String(), "Joins") {
+			ot.output("%s\n", ruleName)
 		}
-		ot.separator("=")
-		ot.output("%s\n", et.LastRuleName())
-		ot.separator("=")
-		ot.output("Source expression:\n")
-		ot.indent(et.fo.o.FormatExpr(et.SrcExpr(), ot.Flags.ExprFormat))
-		if len(newNodes) == 0 {
-			ot.output("\nNo new expressions.\n")
-		}
-		for i := range newNodes {
-			ot.output("\nNew expression %d of %d:\n", i+1, len(newNodes))
-			ot.indent(memo.FormatExpr(newNodes[i], ot.Flags.ExprFormat, et.fo.o.Memo(), ot.catalog))
-		}
+		//ot.separator("=")
+		//ot.output("Source expression:\n")
+		//ot.indent(et.fo.o.FormatExpr(et.SrcExpr(), ot.Flags.ExprFormat))
+		//if len(newNodes) == 0 {
+		//	ot.output("\nNo new expressions.\n")
+		//}
+		//for i := range newNodes {
+		//	ot.output("\nNew expression %d of %d:\n", i+1, len(newNodes))
+		//	ot.indent(memo.FormatExpr(newNodes[i], ot.Flags.ExprFormat, et.fo.o.Memo(), ot.catalog))
+		//}
 	}
 	return ot.builder.String(), nil
 }

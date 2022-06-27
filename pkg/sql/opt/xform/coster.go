@@ -11,6 +11,7 @@
 package xform
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 
@@ -835,6 +836,9 @@ func (c *coster) computeHashJoinCost(join memo.RelExpr) memo.Cost {
 		join.Child(1).(memo.RelExpr).Relational().OutputCols,
 		*on,
 	)
+	if len(leftEq) == 0 {
+		fmt.Println("oh no!")
+	}
 	// Generate a quick way to lookup if two columns are join equality
 	// columns. We add in both directions because we don't know which way
 	// the equality filters will be defined.

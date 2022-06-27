@@ -237,15 +237,7 @@
 # GenerateLookupJoins creates LookupJoin operators for all indexes (of the Scan
 # table) which allow it (including non-covering indexes). See the
 # GenerateLookupJoins custom function for more details.
-[GenerateLookupJoins, Explore]
-(InnerJoin | LeftJoin | SemiJoin | AntiJoin
-    $left:*
-    (Scan $scanPrivate:*) & (IsCanonicalScan $scanPrivate)
-    $on:*
-    $private:*
-)
-=>
-(GenerateLookupJoins (OpName) $left $scanPrivate $on $private)
+
 
 # TODO(rytaft): The following uses paired-joins, in GenerateInvertedJoins.
 # Using paired-joins may be desirable in more cases than just spatial queries.
