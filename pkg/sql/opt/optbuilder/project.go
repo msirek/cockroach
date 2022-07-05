@@ -158,6 +158,7 @@ func (b *Builder) analyzeSelectList(
 			}
 
 			texpr = inScope.resolveType(e.Expr, desired)
+			texpr = b.replaceDatums(texpr)
 		}
 
 		// Output column names should exactly match the original expression, so we
@@ -353,6 +354,7 @@ func (pb *projectionBuilder) Add(
 		pb.outScope.appendColumnsFromScope(pb.inScope)
 	}
 	typedExpr := pb.inScope.resolveType(expr, desiredType)
+	typedExpr = pb.b.replaceDatums(typedExpr)
 	scopeCol := pb.outScope.addColumn(name, typedExpr)
 	scalar := pb.b.buildScalar(typedExpr, pb.inScope, pb.outScope, scopeCol, nil)
 

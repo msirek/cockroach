@@ -472,6 +472,12 @@ func (b *Builder) buildScalar(
 	// tree.Datum case needs to occur after *tree.Placeholder which implements
 	// Datum.
 	case tree.Datum:
+		if t.ResolvedType().Family() == types.IntFamily {
+			if val, ok := t.(*tree.DInt); ok && int(*val) == 123 {
+				i := 0
+				i++ // msirek-temp
+			}
+		}
 		out = b.factory.ConstructConstVal(t, t.ResolvedType())
 
 	default:
@@ -884,6 +890,7 @@ func (sb *ScalarBuilder) Build(expr tree.Expr) (err error) {
 	}()
 
 	typedExpr := sb.scope.resolveType(expr, types.Any)
+	typedExpr = sb.replaceDatums(typedExpr)
 	scalar := sb.buildScalar(typedExpr, &sb.scope, nil, nil, nil)
 	sb.factory.Memo().SetScalarRoot(scalar)
 	return nil

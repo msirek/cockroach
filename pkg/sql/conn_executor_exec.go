@@ -142,7 +142,45 @@ func (ex *connExecutor) execStmt(
 				ev, payload, err = ex.execStmtInOpenState(ctx, parserStmt, prepared, pinfo, res, canAutoCommit)
 			})
 		} else {
-			ev, payload, err = ex.execStmtInOpenState(ctx, parserStmt, prepared, pinfo, res, canAutoCommit)
+			doAutoPrep := false
+			ex.planner.EvalContext().TestingKnobs.AlwaysPrepareAndExecute = true // msirek-temp
+			if ex.planner.EvalContext().TestingKnobs.AlwaysPrepareAndExecute && pinfo == nil {
+				switch parserStmt.AST.(type) {
+				case *tree.Explain:
+					doAutoPrep = true
+				}
+			}
+
+			if doAutoPrep {
+				const stmtName = "autoPrepStmt"
+				prep := &tree.Prepare{
+					Name:      stmtName,
+					Types:     nil,
+					Statement: parserStmt.AST,
+				}
+				prepStmt :=
+					parser.Statement{
+						SQL:             tree.AsStringWithFlags(prep, tree.FmtParsable),
+						AST:             prep,
+						NumPlaceholders: parserStmt.NumPlaceholders,
+						NumAnnotations:  parserStmt.NumAnnotations,
+					}
+				ev, payload, err = ex.execStmtInOpenState(ctx, prepStmt, prepared, pinfo, res, canAutoCommit)
+				execute := &tree.Execute{
+					Name:   stmtName,
+					Params: nil,
+				}
+				execStmt :=
+					parser.Statement{
+						SQL:             tree.AsStringWithFlags(execute, tree.FmtParsable),
+						AST:             execute,
+						NumPlaceholders: 0,
+						NumAnnotations:  0,
+					}
+				ev, payload, err = ex.execStmtInOpenState(ctx, execStmt, prepared, pinfo, res, canAutoCommit)
+			} else {
+				ev, payload, err = ex.execStmtInOpenState(ctx, parserStmt, prepared, pinfo, res, canAutoCommit)
+			}
 		}
 		switch ev.(type) {
 		case eventNonRetriableErr:
@@ -1042,6 +1080,13 @@ func (ex *connExecutor) dispatchToExecutionEngine(
 	}
 	// Prepare the plan. Note, the error is processed below. Everything
 	// between here and there needs to happen even if there's an error.
+
+	//var placeholderHints tree.PlaceholderTypes
+	// planner.extendedEvalCtx.TestingKnobs.AlwaysPrepareAndExecute = true // msirek-temp
+	//if planner.extendedEvalCtx.TestingKnobs.AlwaysPrepareAndExecute {
+	//	ex.populatePrepared(ctx, ex.state.mu.txn, placeholderHints, planner)
+	//}  // msirek-temp
+
 	err := ex.makeExecPlan(ctx, planner)
 	// We'll be closing the plan manually below after execution; this
 	// defer is a catch-all in case some other return path is taken.
@@ -1360,6 +1405,7 @@ func (ex *connExecutor) handleTxnRowsWrittenReadLimits(ctx context.Context) erro
 // makeExecPlan creates an execution plan and populates planner.curPlan using
 // the cost-based optimizer.
 func (ex *connExecutor) makeExecPlan(ctx context.Context, planner *planner) error {
+	// msirek-temp
 	if err := planner.makeOptimizerPlan(ctx); err != nil {
 		log.VEventf(ctx, 1, "optimizer plan failed: %v", err)
 		return err

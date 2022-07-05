@@ -145,7 +145,47 @@ type Builder struct {
 	// (without ON CONFLICT) or false otherwise. All mutated tables will have an
 	// entry in the map.
 	areAllTableMutationsSimpleInserts map[cat.StableID]bool
+
+	// autoPlaceholderVisitor replaces all integer and boolean Datums with
+	// placeholders. This is intended to only be used for testing.
+	autoPlaceholderVisitor ReplaceDatumPlaceholderVisitor
+
+	ReplaceDatamsWithPlaceholders bool
 }
+
+// ReplaceDatumPlaceholderVisitor replaces occurrences of Datum expressions with
+// placeholders, and updates b.semaCtx.Placeholders with the corresponding Datum
+// values. This is used to prepare and execute a statement with placeholders.
+type ReplaceDatumPlaceholderVisitor struct {
+	b *Builder
+}
+
+var _ tree.Visitor = &ReplaceDatumPlaceholderVisitor{}
+
+// VisitPre satisfies the tree.Visitor interface.
+func (v *ReplaceDatumPlaceholderVisitor) VisitPre(
+	expr tree.Expr,
+) (recurse bool, newExpr tree.Expr) {
+	switch t := expr.(type) {
+	case tree.Datum:
+		v.b.evalCtx.Placeholders.Values = append(v.b.evalCtx.Placeholders.Values, t)
+		placeholder, _ := tree.NewPlaceholder(strconv.Itoa(len(v.b.evalCtx.Placeholders.Values)))
+
+		v.b.semaCtx.Placeholders.PlaceholderTypesInfo.TypeHints =
+			append(v.b.semaCtx.Placeholders.PlaceholderTypesInfo.TypeHints, t.ResolvedType())
+		v.b.semaCtx.Placeholders.PlaceholderTypesInfo.Types =
+			append(v.b.semaCtx.Placeholders.PlaceholderTypesInfo.Types, t.ResolvedType())
+
+		if _, err := placeholder.TypeCheck(v.b.ctx, v.b.semaCtx, t.ResolvedType()); err != nil {
+			panic(err)
+		}
+		return false, placeholder
+	}
+	return true, expr
+}
+
+// VisitPost satisfies the Visitor interface.
+func (*ReplaceDatumPlaceholderVisitor) VisitPost(expr tree.Expr) tree.Expr { return expr }
 
 // New creates a new Builder structure initialized with the given
 // parsed SQL statement.
@@ -157,14 +197,31 @@ func New(
 	factory *norm.Factory,
 	stmt tree.Statement,
 ) *Builder {
-	return &Builder{
+	builder := &Builder{
 		factory: factory,
 		stmt:    stmt,
 		ctx:     ctx,
 		semaCtx: semaCtx,
 		evalCtx: evalCtx,
 		catalog: catalog,
+		// ReplaceDatamsWithPlaceholders: len(semaCtx.Placeholders.Types) == 0,  // msirek-temp
 	}
+	builder.autoPlaceholderVisitor.b = builder
+	// builder.KeepPlaceholders = builder.ReplaceDatamsWithPlaceholders  // msirek-temp
+	return builder
+}
+
+// replaceDatums replaces Datums in the tree with Placeholders. This is meant
+// for testing only. b.ReplaceDatamsWithPlaceholders should always be false for
+// actual production queries.
+func (b *Builder) replaceDatums(typedExpr tree.TypedExpr) (expr tree.TypedExpr) {
+	expr = typedExpr
+	if b.ReplaceDatamsWithPlaceholders && b.KeepPlaceholders {
+		if newExpr, changed := tree.WalkExpr(&b.autoPlaceholderVisitor, typedExpr); changed {
+			expr = newExpr.(tree.TypedExpr)
+		}
+	}
+	return expr
 }
 
 // Build is the top-level function to build the memo structure inside

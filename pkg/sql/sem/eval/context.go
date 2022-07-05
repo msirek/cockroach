@@ -387,6 +387,12 @@ func (ec *Context) HasPlaceholders() bool {
 	return ec.Placeholders != nil
 }
 
+// HasOneOrMorePlaceholders returns true if this EvalContext's has one or more
+// placeholders, which may not yet have assigned Values.
+func (ec *Context) HasOneOrMorePlaceholders() bool {
+	return ec.Placeholders != nil && len(ec.Placeholders.Types) > 0
+}
+
 const regionKey = "region"
 
 // GetLocalRegion returns the region name of the local processor

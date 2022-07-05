@@ -407,6 +407,7 @@ func (b *Builder) buildWindowOrdering(
 	for j, t := range orderBy {
 		// ORDER BY (a, b) => ORDER BY a, b.
 		te := inScope.resolveType(t.Expr, types.Any)
+		te = b.replaceDatums(te)
 		cols := flattenTuples([]tree.TypedExpr{te})
 
 		for _, e := range cols {
@@ -439,6 +440,7 @@ func (b *Builder) buildFilterCol(
 	b.semaCtx.Properties.Require("FILTER", tree.RejectSpecial)
 
 	te := inScope.resolveAndRequireType(filter, types.Bool)
+	te = b.replaceDatums(te)
 
 	col := outScope.findExistingCol(te, false /* allowSideEffects */)
 	if col == nil {

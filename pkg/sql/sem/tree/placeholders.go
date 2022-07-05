@@ -218,3 +218,7 @@ func NewNoValueProvidedForPlaceholderErr(pIdx PlaceholderIdx) error {
 		"no value provided for placeholder: $%d", pIdx+1,
 	)
 }
+
+func WalkStatement(v Visitor, stmt Statement) (newStmt Statement, changed bool) {
+	return walkStmt(v, stmt)
+}

@@ -118,8 +118,10 @@ func (b *Builder) buildJoin(
 				exprKindOn.String(), tree.RejectGenerators|tree.RejectWindowApplications,
 			)
 			outScope.context = exprKindOn
+			texpr := outScope.resolveAndRequireType(on.Expr, types.Bool)
+			texpr = b.replaceDatums(texpr)
 			filter := b.buildScalar(
-				outScope.resolveAndRequireType(on.Expr, types.Bool), outScope, nil, nil, nil,
+				texpr, outScope, nil, nil, nil,
 			)
 			filters = memo.FiltersExpr{b.factory.ConstructFiltersItem(filter)}
 		} else {

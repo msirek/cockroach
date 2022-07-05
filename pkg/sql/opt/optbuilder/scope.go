@@ -1313,6 +1313,7 @@ func (s *scope) replaceWindowFn(f *tree.FuncExpr, def *tree.FunctionDefinition) 
 	f.WindowDef.Partitions = make(tree.Exprs, len(oldPartitions))
 	for i, e := range oldPartitions {
 		typedExpr := s.resolveType(e, types.Any)
+		typedExpr = s.builder.replaceDatums(typedExpr)
 		f.WindowDef.Partitions[i] = typedExpr
 	}
 
@@ -1324,6 +1325,7 @@ func (s *scope) replaceWindowFn(f *tree.FuncExpr, def *tree.FunctionDefinition) 
 			panic(errOrderByIndexInWindow)
 		}
 		typedExpr := s.resolveType(ord.Expr, types.Any)
+		typedExpr = s.builder.replaceDatums(typedExpr)
 		ord.Expr = typedExpr
 		f.WindowDef.OrderBy[i] = &ord
 	}
@@ -1453,12 +1455,14 @@ func analyzeWindowFrame(s *scope, windowDef *tree.WindowDef) error {
 		oldContext := s.context
 		s.context = exprKindWindowFrameStart
 		startBound.OffsetExpr = s.resolveAndRequireType(startBound.OffsetExpr, requiredType)
+		startBound.OffsetExpr = s.builder.replaceDatums(startBound.OffsetExpr.(tree.TypedExpr))
 		s.context = oldContext
 	}
 	if endBound != nil && endBound.OffsetExpr != nil {
 		oldContext := s.context
 		s.context = exprKindWindowFrameEnd
 		endBound.OffsetExpr = s.resolveAndRequireType(endBound.OffsetExpr, requiredType)
+		endBound.OffsetExpr = s.builder.replaceDatums(endBound.OffsetExpr.(tree.TypedExpr))
 		s.context = oldContext
 	}
 	return nil

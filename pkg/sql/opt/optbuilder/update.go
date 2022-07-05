@@ -216,6 +216,7 @@ func (mb *mutationBuilder) addUpdateCols(exprs tree.UpdateExprs) {
 
 		// Add new column to the projections scope.
 		texpr := inScope.resolveType(expr, targetCol.DatumType())
+		texpr = mb.b.replaceDatums(texpr)
 		targetColName := targetCol.ColName()
 		colName := scopeColName(targetColName).WithMetadataName(string(targetColName) + "_new")
 		scopeCol := projectionsScope.addColumn(colName, texpr)

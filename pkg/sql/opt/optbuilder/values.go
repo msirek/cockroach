@@ -72,6 +72,7 @@ func (b *Builder) buildValuesClause(
 
 			expr := inScope.walkExprTree(tuple[colIdx])
 			texpr, err := tree.TypeCheck(b.ctx, expr, b.semaCtx, desired)
+			texpr = b.replaceDatums(texpr)
 			if err != nil {
 				panic(err)
 			}

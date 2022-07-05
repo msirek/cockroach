@@ -37,6 +37,9 @@ type TestingKnobs struct {
 	// randomized via the metamorphic testing will be overridden to use the
 	// production value.
 	ForceProductionValues bool
+	// AlwaysPrepareAndExecute is used to force SQL that is not written with
+	// PREPARE and EXECUTE to use these steps for compilation and execution.
+	AlwaysPrepareAndExecute bool
 
 	CallbackGenerators map[string]*CallbackValueGenerator
 }

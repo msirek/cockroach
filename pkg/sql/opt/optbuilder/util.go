@@ -67,6 +67,7 @@ func (b *Builder) expandStar(
 	switch t := expr.(type) {
 	case *tree.TupleStar:
 		texpr := inScope.resolveType(t.Expr, types.Any)
+		texpr = b.replaceDatums(texpr)
 		typ := texpr.ResolvedType()
 		if typ.Family() != types.TupleFamily {
 			panic(tree.NewTypeIsNotCompositeError(typ))
@@ -440,6 +441,7 @@ func (b *Builder) resolveAndBuildScalar(
 
 	inScope.context = context
 	texpr := inScope.resolveAndRequireType(expr, requiredType)
+	texpr = b.replaceDatums(texpr)
 	return b.buildScalar(texpr, inScope, nil, nil, nil)
 }
 
