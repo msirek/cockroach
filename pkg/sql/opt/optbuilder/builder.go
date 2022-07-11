@@ -168,8 +168,8 @@ func (v *ReplaceDatumPlaceholderVisitor) VisitPre(
 ) (recurse bool, newExpr tree.Expr) {
 	switch t := expr.(type) {
 	case tree.Datum:
-		v.b.evalCtx.Placeholders.Values = append(v.b.evalCtx.Placeholders.Values, t)
-		placeholder, _ := tree.NewPlaceholder(strconv.Itoa(len(v.b.evalCtx.Placeholders.Values)))
+		v.b.semaCtx.Placeholders.Values = append(v.b.semaCtx.Placeholders.Values, t)
+		placeholder, _ := tree.NewPlaceholder(strconv.Itoa(len(v.b.semaCtx.Placeholders.Values)))
 
 		v.b.semaCtx.Placeholders.PlaceholderTypesInfo.TypeHints =
 			append(v.b.semaCtx.Placeholders.PlaceholderTypesInfo.TypeHints, t.ResolvedType())
@@ -198,13 +198,13 @@ func New(
 	stmt tree.Statement,
 ) *Builder {
 	builder := &Builder{
-		factory: factory,
-		stmt:    stmt,
-		ctx:     ctx,
-		semaCtx: semaCtx,
-		evalCtx: evalCtx,
-		catalog: catalog,
-		// ReplaceDatamsWithPlaceholders: len(semaCtx.Placeholders.Types) == 0,  // msirek-temp
+		factory:                       factory,
+		stmt:                          stmt,
+		ctx:                           ctx,
+		semaCtx:                       semaCtx,
+		evalCtx:                       evalCtx,
+		catalog:                       catalog,
+		ReplaceDatamsWithPlaceholders: evalCtx.TestingKnobs.ProcessingAlwaysPrepareAndExecute, // msirek-temp
 	}
 	builder.autoPlaceholderVisitor.b = builder
 	// builder.KeepPlaceholders = builder.ReplaceDatamsWithPlaceholders  // msirek-temp

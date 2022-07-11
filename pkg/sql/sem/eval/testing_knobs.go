@@ -40,6 +40,10 @@ type TestingKnobs struct {
 	// AlwaysPrepareAndExecute is used to force SQL that is not written with
 	// PREPARE and EXECUTE to use these steps for compilation and execution.
 	AlwaysPrepareAndExecute bool
+	// ProcessingAlwaysPrepareAndExecute is true while a statement which has been
+	// converted to use PREPARE due to the AlwaysPrepareAndExecute flag is being
+	// prepared.
+	ProcessingAlwaysPrepareAndExecute bool
 
 	CallbackGenerators map[string]*CallbackValueGenerator
 }

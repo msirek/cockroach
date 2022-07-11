@@ -143,12 +143,12 @@ func (ex *connExecutor) execStmt(
 			})
 		} else {
 			doAutoPrep := false
+			_, ok := parserStmt.AST.(*tree.Explain)
 			ex.planner.EvalContext().TestingKnobs.AlwaysPrepareAndExecute = true // msirek-temp
-			if ex.planner.EvalContext().TestingKnobs.AlwaysPrepareAndExecute && pinfo == nil {
-				switch parserStmt.AST.(type) {
-				case *tree.Explain:
-					doAutoPrep = true
-				}
+			if ex.planner.EvalContext().TestingKnobs.AlwaysPrepareAndExecute &&
+				pinfo == nil && prepared == nil && ok { // msirek-temp
+				//parserStmt.AST.StatementType() == tree.TypeDML {
+				doAutoPrep = true
 			}
 
 			if doAutoPrep {
@@ -165,19 +165,35 @@ func (ex *connExecutor) execStmt(
 						NumPlaceholders: parserStmt.NumPlaceholders,
 						NumAnnotations:  parserStmt.NumAnnotations,
 					}
-				ev, payload, err = ex.execStmtInOpenState(ctx, prepStmt, prepared, pinfo, res, canAutoCommit)
-				execute := &tree.Execute{
-					Name:   stmtName,
-					Params: nil,
-				}
-				execStmt :=
-					parser.Statement{
-						SQL:             tree.AsStringWithFlags(execute, tree.FmtParsable),
-						AST:             execute,
-						NumPlaceholders: 0,
-						NumAnnotations:  0,
+				ex.planner.EvalContext().TestingKnobs.ProcessingAlwaysPrepareAndExecute = true
+				savedPlaceholders := ex.planner.EvalContext().Placeholders
+				ex.planner.EvalContext().Placeholders = nil
+				ev, payload, err = ex.execStmtInOpenState(ctx, prepStmt, prepared, pinfo, res, false /* canAutoCommit */)
+				ex.planner.EvalContext().Placeholders = savedPlaceholders
+				ex.planner.EvalContext().TestingKnobs.ProcessingAlwaysPrepareAndExecute = false
+				if err == nil {
+					pinfo = &ex.planner.semaCtx.Placeholders
+					var exprs tree.Exprs
+					exprs = make(tree.Exprs, len(ex.planner.semaCtx.Placeholders.Values))
+					for i, placeholderValue := range ex.planner.semaCtx.Placeholders.Values {
+						exprs[i] = placeholderValue
 					}
-				ev, payload, err = ex.execStmtInOpenState(ctx, execStmt, prepared, pinfo, res, canAutoCommit)
+					execute := &tree.Execute{
+						Name:   stmtName,
+						Params: exprs,
+					}
+					execStmt :=
+						parser.Statement{
+							SQL:             tree.AsStringWithFlags(execute, tree.FmtParsable),
+							AST:             execute,
+							NumPlaceholders: len(exprs),
+							NumAnnotations:  0,
+						}
+					ev, payload, err = ex.execStmtInOpenState(ctx, execStmt, prepared, pinfo, res, canAutoCommit)
+					delete(ex.extraTxnState.prepStmtsNamespace.prepStmts, execute.Name.String())
+					// Make sure the Placeholders are not reused.
+					ex.planner.semaCtx.Placeholders.Init(0, nil)
+				}
 			} else {
 				ev, payload, err = ex.execStmtInOpenState(ctx, parserStmt, prepared, pinfo, res, canAutoCommit)
 			}
@@ -314,6 +330,10 @@ func (ex *connExecutor) execStmtInOpenState(
 	sp.SetTag("statement", attribute.StringValue(parserStmt.SQL))
 	defer sp.Finish()
 	ast := parserStmt.AST
+	if _, ok := ast.(*tree.Prepare); ok {
+		i := 0
+		i++ // msirek-temp
+	}
 	ctx = withStatement(ctx, ast)
 
 	makeErrEvent := func(err error) (fsm.Event, fsm.EventPayload, error) {
@@ -493,6 +513,10 @@ func (ex *connExecutor) execStmtInOpenState(
 		stmt.ExpectedTypes = ps.Columns
 		stmt.StmtNoConstants = ps.StatementNoConstants
 		res.ResetStmtType(ps.AST)
+		//_, isStreaming := res.(*streamingCommandResult)
+		//if !ex.planner.EvalContext().TestingKnobs.AlwaysPrepareAndExecute || !isStreaming {
+		//	res.ResetStmtType(ps.AST)
+		//} // msirek-temp
 
 		if e.DiscardRows {
 			ih.SetDiscardRows()

@@ -227,13 +227,27 @@ func (ex *connExecutor) prepare(
 		// preparation.
 		stmt.Prepared = prepared
 
-		if err := tree.ProcessPlaceholderAnnotations(&ex.planner.semaCtx, stmt.AST, placeholderHints); err != nil {
-			return err
+		if !ex.planner.EvalContext().TestingKnobs.ProcessingAlwaysPrepareAndExecute {
+			if err := tree.ProcessPlaceholderAnnotations(&ex.planner.semaCtx, stmt.AST, placeholderHints); err != nil {
+				return err
+			}
 		}
 
 		p.stmt = stmt
 		p.semaCtx.Annotations = tree.MakeAnnotations(stmt.NumAnnotations)
 		flags, err = ex.populatePrepared(ctx, txn, placeholderHints, p)
+
+		// Delay PlaceholderAnnotation type checks if the call to populatePrepared
+		// could add placeholders.
+		if err == nil && ex.planner.EvalContext().TestingKnobs.ProcessingAlwaysPrepareAndExecute {
+			prepared.Types = ex.planner.semaCtx.Placeholders.PlaceholderTypesInfo.Types
+			prepared.TypeHints = ex.planner.semaCtx.Placeholders.PlaceholderTypesInfo.TypeHints
+			prepared.Statement.NumPlaceholders = len(prepared.Types)
+			placeholderHints = prepared.Types
+			if err = tree.ProcessPlaceholderAnnotations(&ex.planner.semaCtx, stmt.AST, placeholderHints); err != nil {
+				return err
+			}
+		}
 		return err
 	}
 
