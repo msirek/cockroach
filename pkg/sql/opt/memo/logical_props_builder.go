@@ -2220,6 +2220,26 @@ type joinPropsHelper struct {
 	filterIsFalse     bool
 
 	selfJoinCols opt.ColSet
+
+	// redundantJoinCols is the set of columns that appear in equality join
+	// conditions (have equivalencies in filtersFD), and are functionally
+	// determined by other columns in filtersFD.
+	redundantJoinCols opt.ColSet
+}
+
+// redundantCols returns the subset of the given columns that are functionally
+// determined by the remaining columns. In many contexts (such as if they are
+// equijoin columns), equijoin conditions involving redundant columns can be
+// ignored for selectivity estimation purposes. The passed in functional
+// dependencies (fdSet) is used to decide which columns are redundant. In the
+// case of joins, this fdSet should be the union of the functional dependencies
+// of the left and right input relations.
+func redundantCols(fdSet *props.FuncDepSet, cols opt.ColSet) opt.ColSet {
+	reducedCols := fdSet.ReduceCols(cols)
+	if reducedCols.Equals(cols) {
+		return opt.ColSet{}
+	}
+	return cols.Difference(reducedCols)
 }
 
 func (h *joinPropsHelper) init(b *logicalPropsBuilder, joinExpr RelExpr) {
@@ -2333,6 +2353,16 @@ func (h *joinPropsHelper) init(b *logicalPropsBuilder, joinExpr RelExpr) {
 		h.filterIsTrue = h.filters.IsTrue()
 		h.filterIsFalse = h.filters.IsFalse()
 	}
+
+	inputFDs := props.FuncDepSet{}
+	inputFDs.CopyFrom(&h.rightProps.FuncDeps)
+	inputFDs.AddFrom(&h.leftProps.FuncDeps)
+	var equijoinCols opt.ColSet
+	equijoinCols = h.filtersFD.EquivalentCols()
+	// Using dependencies defined on columns in the input relations to the join,
+	// determine the set of join columns which should be considered redundant and
+	// not used in selectivity calculation.
+	h.redundantJoinCols = redundantCols(&inputFDs, equijoinCols)
 }
 
 func (h *joinPropsHelper) outputCols() opt.ColSet {

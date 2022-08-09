@@ -1990,6 +1990,18 @@ func (f *FuncDepSet) makeEquivMap(from, to opt.ColSet) map[opt.ColumnID]opt.Colu
 	return equivMap
 }
 
+// EquivalentCols returns the ColSet of all columns involved in equivalence
+// relations from this FuncDepSet.
+func (f *FuncDepSet) EquivalentCols() (equivalentCols opt.ColSet) {
+	for i := range f.deps {
+		fd := &f.deps[i]
+		if fd.equiv {
+			equivalentCols.UnionWith(fd.from.Union(fd.to))
+		}
+	}
+	return equivalentCols
+}
+
 // isConstant returns true if this FD contains the set of constant columns. If
 // it exists, it must always be the first FD in the set.
 func (f *funcDep) isConstant() bool {

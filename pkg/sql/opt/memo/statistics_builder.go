@@ -1302,7 +1302,7 @@ func (sb *statisticsBuilder) buildJoin(
 			equivReps.UnionWith(h.selfJoinCols)
 		}
 
-		s.ApplySelectivity(sb.selectivityFromEquivalencies(equivReps, &h.filtersFD, join, s))
+		s.ApplySelectivity(sb.selectivityFromEquivalencies(equivReps, h.redundantJoinCols, &h.filtersFD, join, s))
 		var oredTermSelectivity props.Selectivity
 		oredTermSelectivity, numUnappliedConjuncts =
 			sb.selectivityFromOredEquivalencies(h, join, s, numUnappliedConjuncts, false /* semiJoin */)
@@ -1829,7 +1829,7 @@ func (sb *statisticsBuilder) buildZigzagJoin(
 	// -----------------------------------
 	multiColSelectivity, _ := sb.selectivityFromMultiColDistinctCounts(constrainedCols, zigzag, s)
 	s.ApplySelectivity(multiColSelectivity)
-	s.ApplySelectivity(sb.selectivityFromEquivalencies(equivReps, &relProps.FuncDeps, zigzag, s))
+	s.ApplySelectivity(sb.selectivityFromEquivalencies(equivReps, opt.ColSet{}, &relProps.FuncDeps, zigzag, s))
 	s.ApplySelectivity(sb.selectivityFromUnappliedConjuncts(numUnappliedConjuncts))
 	s.ApplySelectivity(sb.selectivityFromNullsRemoved(zigzag, relProps.NotNullCols, constrainedCols))
 
@@ -3025,7 +3025,7 @@ func (sb *statisticsBuilder) filterRelExpr(
 	// -----------------------------------
 	corr := sb.correlationFromMultiColDistinctCounts(constrainedCols, e, s)
 	s.ApplySelectivity(sb.selectivityFromConstrainedCols(constrainedCols, histCols, e, s, corr))
-	s.ApplySelectivity(sb.selectivityFromEquivalencies(equivReps, &relProps.FuncDeps, e, s))
+	s.ApplySelectivity(sb.selectivityFromEquivalencies(equivReps, opt.ColSet{}, &relProps.FuncDeps, e, s))
 	s.ApplySelectivity(sb.selectivityFromUnappliedConjuncts(numUnappliedConjuncts))
 	s.ApplySelectivity(sb.selectivityFromNullsRemoved(e, notNullCols, constrainedCols))
 
@@ -4127,12 +4127,18 @@ func (sb *statisticsBuilder) predicateSelectivity(
 // selectivityFromEquivalencies determines the selectivity of equality
 // constraints. It must be called before applyEquivalencies.
 func (sb *statisticsBuilder) selectivityFromEquivalencies(
-	equivReps opt.ColSet, filterFD *props.FuncDepSet, e RelExpr, s *props.Statistics,
+	equivReps, redundantCols opt.ColSet, filterFD *props.FuncDepSet, e RelExpr, s *props.Statistics,
 ) (selectivity props.Selectivity) {
 	selectivity = props.OneSelectivity
 	equivReps.ForEach(func(i opt.ColumnID) {
 		equivGroup := filterFD.ComputeEquivGroup(i)
-		selectivity.Multiply(sb.selectivityFromEquivalency(equivGroup, e, s))
+		if equivGroup.SubsetOf(redundantCols) {
+			// If the current set of equated columns is fully determined by other
+			// equijoin columns, then this filter term is not actually further
+			// qualifying rows, and should not contribute to selectivity estimation.
+		} else {
+			selectivity.Multiply(sb.selectivityFromEquivalency(equivGroup, e, s))
+		}
 	})
 
 	return selectivity
@@ -4211,7 +4217,7 @@ func (sb *statisticsBuilder) selectivityFromOredEquivalencies(
 					equivReps, h.leftProps.OutputCols, h.rightProps.OutputCols, FD, e, s,
 				)
 			} else {
-				singleSelectivity = sb.selectivityFromEquivalencies(equivReps, FD, e, s)
+				singleSelectivity = sb.selectivityFromEquivalencies(equivReps, opt.ColSet{}, FD, e, s)
 			}
 			selectivities = append(selectivities, singleSelectivity)
 		}
