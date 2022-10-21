@@ -56,6 +56,11 @@ use_multiple_disks='{{if .UseMultipleDisks}}true{{end}}'
 disks=()
 mount_prefix="/mnt/data"
 
+{{ if .Xfs }}
+apt-get update -q
+apt-get install -yq xfsprogs
+{{ end }}
+
 {{ if .Zfs }}
 apt-get update -q
 apt-get install -yq zfsutils-linux
@@ -95,6 +100,10 @@ elif [ "${#disks[@]}" -eq "1" ] || [ -n "$use_multiple_disks" ]; then
 {{ if .Zfs }}
     zpool create -f $(basename $mountpoint) -m ${mountpoint} ${disk}
     # NOTE: we don't need an /etc/fstab entry for ZFS. It will handle this itself.
+{{ else if .Xfs }}
+    mkfs.xfs -q -f ${disk}
+    mount -o ${mount_opts} ${disk} ${mountpoint}
+    echo "${d} ${mountpoint} xfs ${mount_opts} 1 1" | tee -a /etc/fstab
 {{ else }}
     mkfs.ext4 -q -F ${disk}
     mount -o ${mount_opts} ${disk} ${mountpoint}
@@ -109,6 +118,12 @@ else
 {{ if .Zfs }}
   zpool create -f $(basename $mountpoint) -m ${mountpoint} ${disks[@]}
   # NOTE: we don't need an /etc/fstab entry for ZFS. It will handle this itself.
+{{ else if .Xfs }}
+  raiddisk="/dev/md0"
+  mdadm -q --create ${raiddisk} --level=0 --raid-devices=${#disks[@]} "${disks[@]}"
+  mkfs.xfs -q -f ${raiddisk}
+  mount -o ${mount_opts} ${raiddisk} ${mountpoint}
+  echo "${raiddisk} ${mountpoint} xfs ${mount_opts} 1 1" | tee -a /etc/fstab
 {{ else }}
   raiddisk="/dev/md0"
   mdadm -q --create ${raiddisk} --level=0 --raid-devices=${#disks[@]} "${disks[@]}"
@@ -227,12 +242,14 @@ func writeStartupScript(
 		ExtraMountOpts   string
 		UseMultipleDisks bool
 		Zfs              bool
+		Xfs              bool
 	}
 
 	args := tmplParams{
 		ExtraMountOpts:   extraMountOpts,
 		UseMultipleDisks: useMultiple,
 		Zfs:              fileSystem == vm.Zfs,
+		Xfs:              fileSystem == vm.Xfs,
 	}
 
 	tmpfile, err := os.CreateTemp("", "gce-startup-script")

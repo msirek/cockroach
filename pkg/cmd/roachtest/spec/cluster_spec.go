@@ -34,6 +34,9 @@ const (
 
 	// Zfs file system.
 	Zfs fileSystemType = 1
+
+	// Xfs file system.
+	Xfs fileSystemType = 2
 )
 
 // ClusterSpec represents a test's description of what its cluster needs to
@@ -219,7 +222,14 @@ func (s *ClusterSpec) RoachprodOpts(
 		}
 	}
 
-	if s.FileSystem == Zfs {
+	if s.FileSystem == Xfs {
+		if s.Cloud != GCE {
+			return vm.CreateOpts{}, nil, errors.Errorf(
+				"node creation with zfs file system not yet supported on %s", s.Cloud,
+			)
+		}
+		createVMOpts.SSDOpts.FileSystem = vm.Xfs
+	}	else if s.FileSystem == Zfs {
 		if s.Cloud != GCE {
 			return vm.CreateOpts{}, nil, errors.Errorf(
 				"node creation with zfs file system not yet supported on %s", s.Cloud,

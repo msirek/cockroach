@@ -58,7 +58,7 @@ func parseCreateOpts(flags *pflag.FlagSet, opts *vm.CreateOpts) {
 	flags.BoolVar(&opts.SSDOpts.UseLocalSSD,
 		"roachprod-local-ssd", opts.SSDOpts.UseLocalSSD, "Use local SSD")
 	flags.StringVar(&opts.SSDOpts.FileSystem,
-		"filesystem", opts.SSDOpts.FileSystem, "The underlying file system(ext4/zfs).")
+		"filesystem", opts.SSDOpts.FileSystem, "The underlying file system(ext4/xfs/zfs).")
 	flags.BoolVar(&opts.SSDOpts.NoExt4Barrier,
 		"local-ssd-no-ext4-barrier", opts.SSDOpts.NoExt4Barrier,
 		`Mount the local SSD with the "-o nobarrier" flag. `+

@@ -167,6 +167,8 @@ const (
 	Zfs = "zfs"
 	// Ext4 refers to the ext4 file system.
 	Ext4 = "ext4"
+	// Xfs refers to the xfs file system.
+	Xfs = "xfs"
 )
 
 // CreateOpts is the set of options when creating VMs.

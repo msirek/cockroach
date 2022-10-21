@@ -91,7 +91,7 @@ func initFlags() {
 	createCmd.Flags().BoolVar(&createVMOpts.SSDOpts.UseLocalSSD,
 		"local-ssd", true, "Use local SSD")
 	createCmd.Flags().StringVar(&createVMOpts.SSDOpts.FileSystem,
-		"filesystem", vm.Ext4, "The underlying file system(ext4/zfs). ext4 is used by default.")
+		"filesystem", vm.Ext4, "The underlying file system(ext4/xfs/zfs). ext4 is used by default.")
 	createCmd.Flags().BoolVar(&createVMOpts.SSDOpts.NoExt4Barrier,
 		"local-ssd-no-ext4-barrier", true,
 		`Mount the local SSD with the "-o nobarrier" flag. Ignored if --local-ssd=false is specified.`)

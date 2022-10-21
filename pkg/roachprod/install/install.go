@@ -148,6 +148,12 @@ sudo apt-get update;
 sudo apt-get install -y \
   zfsutils-linux;
 `,
+
+	"xfs": `
+sudo apt-get update;
+sudo apt-get install -y \
+  xfsprogs;
+`,
 }
 
 // SortedCmds TODO(peter): document
