@@ -727,9 +727,6 @@ func (c *CustomFuncs) mapLookupJoin(
 	tabID := lookupJoin.Table
 	newTabID := newScanPrivate.Table
 
-	// Get the new index columns.
-	newIndexCols := c.e.mem.Metadata().TableMeta(newTabID).IndexColumns(lookupJoin.Index)
-
 	// Create a map from the source columns to the destination columns.
 	var srcColsToDstCols opt.ColMap
 	for srcCol, ok := indexCols.Next(0); ok; srcCol, ok = indexCols.Next(srcCol + 1) {
@@ -748,11 +745,15 @@ func (c *CustomFuncs) mapLookupJoin(
 		remoteLookupExpr := c.e.f.RemapCols(&lookupJoin.RemoteLookupExpr, srcColsToDstCols).(*memo.FiltersExpr)
 		lookupJoin.RemoteLookupExpr = *remoteLookupExpr
 	})
-	lookupJoin.Cols = lookupJoin.Cols.Difference(indexCols).Union(newIndexCols)
+	// Directly map Cols. Previously, the index columns were unconditionally added
+	// to Cols, but semijoin and antijoin should not include these columns unless
+	// required for On clause evaluation.
+	lookupJoin.Cols = lookupJoin.Cols.CopyAndMaybeRemap(srcColsToDstCols)
 	constFilters := c.e.f.RemapCols(&lookupJoin.ConstFilters, srcColsToDstCols).(*memo.FiltersExpr)
 	lookupJoin.ConstFilters = *constFilters
 	on := c.e.f.RemapCols(&lookupJoin.On, srcColsToDstCols).(*memo.FiltersExpr)
 	lookupJoin.On = *on
+	lookupJoin.DerivedEquivCols = lookupJoin.DerivedEquivCols.CopyAndMaybeRemap(srcColsToDstCols)
 }
 
 // GenerateInvertedJoins is similar to GenerateLookupJoins, but instead
@@ -1253,6 +1254,12 @@ func (c *CustomFuncs) IsAntiJoin(private *memo.LookupJoinPrivate) bool {
 	return private.JoinType == opt.AntiJoinOp
 }
 
+// IsLocalityOptimizedJoin returns true if the given lookup join is a locality
+// optimized join
+func (c *CustomFuncs) IsLocalityOptimizedJoin(private *memo.LookupJoinPrivate) bool {
+	return private.LocalityOptimized
+}
+
 // EmptyFiltersExpr returns an empty FiltersExpr.
 func (c *CustomFuncs) EmptyFiltersExpr() memo.FiltersExpr {
 	return memo.EmptyFiltersExpr
@@ -1291,6 +1298,108 @@ func (c *CustomFuncs) CreateLocalityOptimizedLookupJoinPrivateIncludingCols(
 // ok=false. See the comments above the GenerateLocalityOptimizedAntiJoin and
 // GenerateLocalityOptimizedLookupJoin rules for more details.
 func (c *CustomFuncs) GetLocalityOptimizedLookupJoinExprs(
+	on memo.FiltersExpr, private *memo.LookupJoinPrivate,
+) (localExpr memo.FiltersExpr, remoteExpr memo.FiltersExpr, ok bool) {
+	// Respect the session setting LocalityOptimizedSearch.
+	if !c.e.evalCtx.SessionData().LocalityOptimizedSearch {
+		return nil, nil, false
+	}
+
+	// Check whether this lookup join has already been locality optimized.
+	if private.LocalityOptimized {
+		return nil, nil, false
+	}
+
+	// This lookup join cannot not be part of a paired join.
+	if private.IsSecondJoinInPairedJoiner {
+		return nil, nil, false
+	}
+
+	// This lookup join should have the LookupExpr filled in, indicating that one
+	// or more of the join filters constrain an index column to multiple constant
+	// values.
+	if private.LookupExpr == nil {
+		return nil, nil, false
+	}
+
+	// We can only generate a locality optimized lookup join if we know there is
+	// at most one row produced for each lookup. This is always true for semi
+	// joins if the ON condition is empty, but only true for inner and left joins
+	// (and for semi joins with an ON condition) if private.LookupColsAreTableKey
+	// is true.
+	//
+	// Locality optimized anti joins are implemented differently (see the
+	// GenerateLocalityOptimizedAntiJoin rule), and therefore we can always
+	// generate a locality optimized anti join regardless of the ON conditions or
+	// value of private.LookupColsAreTableKey.
+	if private.JoinType != opt.AntiJoinOp {
+		if (private.JoinType != opt.SemiJoinOp || len(on) > 0) && !private.LookupColsAreTableKey {
+			return nil, nil, false
+		}
+	}
+	tabMeta := c.e.mem.Metadata().TableMeta(private.Table)
+
+	// The PrefixSorter has collected all the prefixes from all the different
+	// partitions (remembering which ones came from local partitions), and has
+	// sorted them so that longer prefixes come before shorter prefixes. For
+	// each span in the scanConstraint, we will iterate through the list of
+	// prefixes until we find a match, so ordering them with longer prefixes
+	// first ensures that the correct match is found. The PrefixSorter is only
+	// non-empty when this index has at least one local and one remote
+	// partition.
+	ps := tabMeta.IndexPartitionLocality(private.Index)
+	if ps.Empty() {
+		return nil, nil, false
+	}
+
+	// Find a filter that constrains the first column of the index.
+	filterIdx, ok := private.GetConstPrefixFilter(c.e.mem.Metadata())
+	if !ok {
+		return nil, nil, false
+	}
+	filter := private.LookupExpr[filterIdx]
+
+	// Check whether the filter constrains the first column of the index
+	// to at least two constant values. We need at least two values so that one
+	// can target a local partition and one can target a remote partition.
+	col, vals, ok := filter.ScalarProps().Constraints.HasSingleColumnConstValues(c.e.evalCtx)
+	if !ok || len(vals) < 2 {
+		return nil, nil, false
+	}
+
+	// Determine whether the values target both local and remote partitions.
+	localValOrds := c.getLocalValues(vals, ps)
+	if localValOrds.Len() == 0 || localValOrds.Len() == len(vals) {
+		// The values target all local or all remote partitions.
+		return nil, nil, false
+	}
+
+	// Split the values into local and remote sets.
+	localValues, remoteValues := c.splitValues(vals, localValOrds)
+
+	// Copy all of the filters from the LookupExpr, and replace the filter that
+	// constrains the first index column with a filter targeting only local
+	// partitions or only remote partitions.
+	localExpr = make(memo.FiltersExpr, len(private.LookupExpr))
+	copy(localExpr, private.LookupExpr)
+	c.e.f.DisableOptimizationsTemporarily(func() {
+		// Disable normalization rules when constructing the lookup expression
+		// so that it does not get normalized into a non-canonical expression.
+		localExpr[filterIdx] = c.e.f.ConstructConstFilter(col, localValues)
+	})
+
+	remoteExpr = make(memo.FiltersExpr, len(private.LookupExpr))
+	copy(remoteExpr, private.LookupExpr)
+	c.e.f.DisableOptimizationsTemporarily(func() {
+		// Disable normalization rules when constructing the lookup expression
+		// so that it does not get normalized into a non-canonical expression.
+		remoteExpr[filterIdx] = c.e.f.ConstructConstFilter(col, remoteValues)
+	})
+
+	return localExpr, remoteExpr, true
+}
+
+func (c *CustomFuncs) GetLocalAndRemoteTableScans(
 	on memo.FiltersExpr, private *memo.LookupJoinPrivate,
 ) (localExpr memo.FiltersExpr, remoteExpr memo.FiltersExpr, ok bool) {
 	// Respect the session setting LocalityOptimizedSearch.

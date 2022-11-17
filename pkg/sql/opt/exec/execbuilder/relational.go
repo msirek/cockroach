@@ -2106,7 +2106,7 @@ func (b *Builder) handleRemoteLookupJoinError(join *memo.LookupJoinExpr) (err er
 	}
 
 	homeRegion := ""
-	if lookupTable.IsGlobalTable() || join.LocalityOptimized {
+	if lookupTable.IsGlobalTable() || join.LocalityOptimized || join.LocalityOptimizedSearch {
 		// HomeRegion() does not automatically fill in the home region of a global
 		// table as the gateway region, so let's manually set it here.
 		// Locality optimized joins are considered local in phase 1.
