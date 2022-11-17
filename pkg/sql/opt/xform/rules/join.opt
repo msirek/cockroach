@@ -705,7 +705,7 @@
 # one of the other regions, the first plan would be slightly faster.
 [GenerateLocalityOptimizedLookupJoin, Explore]
 (LookupJoin
-    $input:*
+    $input:* & ^(IsRegionalByRowTableScan $input)
     $on:*
     $private:* &
         ^(IsAntiJoin $private) &
@@ -722,6 +722,36 @@
 (LookupJoin
     $input
     $on
+    (CreateLocalityOptimizedLookupJoinPrivate
+        $localExpr
+        $remoteExpr
+        $private
+    )
+)
+
+# GenerateLocalityOptimizedSearchOfLOJs converts a locality-optimized join with
+# a REGIONAL BY ROW input table into a locality-optimized search of two
+# locality-optimized joins, with the left branch reading local rows from the
+# input table and the right branch reading remote rows from the input table.
+[GenerateLocalityOptimizedSearchOfLOJs, Explore]
+(LookupJoin
+    $input:* & (IsRegionalByRowTableScan $input)
+    $on:*
+    $private:* &
+        ^(IsAntiJoin $private) &
+        ^(IsLocalityOptimizedJoin $private) &
+        (Let
+            (
+                $localExpr
+                $remoteExpr
+                $ok
+            ):(GetLocalityOptimizedLookupJoinExprs $on $private)
+            $ok
+        )
+)
+=>
+(GenerateLocalityOptimizedSearch
+    (Root)
     (CreateLocalityOptimizedLookupJoinPrivate
         $localExpr
         $remoteExpr

@@ -781,7 +781,7 @@ func (c *coster) computeScanCost(scan *memo.ScanExpr, required *physical.Require
 	// TODO(rytaft): This is hacky. We should really be making this determination
 	// based on the latency between regions.
 	if scan.LocalityOptimized {
-		cost /= 3
+		cost /= 30 // msirek-temp
 	}
 	return cost
 }
