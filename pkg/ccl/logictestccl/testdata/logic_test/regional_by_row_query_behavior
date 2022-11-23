@@ -3175,3 +3175,45 @@ WHERE json_col->'loc' @> '{"state":"NY"}'
 ----
 {"loc": {"state": "NY"}}  Big Apple          us-east-1
 {"loc": {"state": "NY"}}  Statue of Liberty  us-east-1
+
+subtest rbr_input_to_lookup_join
+
+query T retry
+EXPLAIN SELECT * FROM regional_by_row_table t1, regional_by_row_table_virt_partial t2 WHERE t1.b = t2.pk LIMIT 1
+----
+distribution: local
+vectorized: true
+·
+• limit
+│ count: 1
+│
+└── • render
+    │
+    └── • union all
+        │ limit: 4294967295
+        │
+        ├── • lookup join
+        │   │ table: regional_by_row_table_virt_partial@regional_by_row_table_virt_partial_pkey
+        │   │ equality cols are key
+        │   │ lookup condition: (crdb_region = 'ap-southeast-2') AND (b = pk)
+        │   │ remote lookup condition: (crdb_region IN ('ca-central-1', 'us-east-1')) AND (b = pk)
+        │   │
+        │   └── • scan
+        │         missing stats
+        │         table: regional_by_row_table@regional_by_row_table_pkey
+        │         spans: [/'ap-southeast-2' - /'ap-southeast-2']
+        │
+        └── • lookup join
+            │ table: regional_by_row_table_virt_partial@regional_by_row_table_virt_partial_pkey
+            │ equality cols are key
+            │ lookup condition: (crdb_region = 'ap-southeast-2') AND (b = pk)
+            │ remote lookup condition: (crdb_region IN ('ca-central-1', 'us-east-1')) AND (b = pk)
+            │
+            └── • scan
+                  missing stats
+                  table: regional_by_row_table@regional_by_row_table_pkey
+                  spans: [/'ca-central-1' - /'us-east-1']
+
+query T retry
+EXPLAIN SELECT * FROM regional_by_row_table t1 WHERE b IN (SELECT pk FROM regional_by_row_table_virt_partial t2) LIMIT 1
+----

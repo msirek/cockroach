@@ -164,6 +164,14 @@ const (
 	// stale.
 	largeMaxCardinalityScanCostPenalty = unboundedMaxCardinalityScanCostPenalty / 2
 
+	// DistributeCost is the per-operation cost overhead for Distribute operations
+	// or scans which access remote regions. This is set to a value in the
+	// ballpark of lookup join overhead costs, but should be refined.
+	// TODO(msirek): Measure actual latencies between regions and produce a table
+	//               for determining the maximum latency between the most remote
+	//               region in a distribution and the gateway region.
+	DistributeCost = randIOCostFactor
+
 	// LargeDistributeCost is the cost to use for Distribute operations when a
 	// session mode is set to error out on access of rows from remote regions.
 	LargeDistributeCost = hugeCost / 100
@@ -528,7 +536,7 @@ func (c *coster) ComputeCost(candidate memo.RelExpr, required *physical.Required
 
 	case opt.UnionOp, opt.IntersectOp, opt.ExceptOp,
 		opt.UnionAllOp, opt.IntersectAllOp, opt.ExceptAllOp, opt.LocalityOptimizedSearchOp:
-		cost = c.computeSetCost(candidate)
+		cost = c.computeSetCost(candidate, required)
 
 	case opt.GroupByOp, opt.ScalarGroupByOp, opt.DistinctOnOp, opt.EnsureDistinctOnOp,
 		opt.UpsertDistinctOnOp, opt.EnsureUpsertDistinctOnOp:
@@ -682,9 +690,11 @@ func (c *coster) computeDistributeCost(
 		return LargeDistributeCost
 	}
 
-	// TODO(rytaft): Compute a real cost here. Currently we just add a tiny cost
-	// as a placeholder.
-	return cpuCostFactor
+	// TODO(rytaft,msirek): Compute a real cost here. Currently we just add a cost
+	//                      which is on par with a lookup (in lookup join) or
+	//                      single-span read costs as a rough estimate of
+	//                      overhead, but actual measurements would be useful.
+	return DistributeCost
 }
 
 func (c *coster) computeScanCost(scan *memo.ScanExpr, required *physical.Required) memo.Cost {
@@ -775,13 +785,30 @@ func (c *coster) computeScanCost(scan *memo.ScanExpr, required *physical.Require
 
 	cost := baseCost + memo.Cost(rowCount)*(seqIOCostFactor+perRowCost)
 
-	// If this scan is locality optimized, divide the cost by 3 in order to make
-	// the total cost of the two scans in the locality optimized plan less than
-	// the cost of the single scan in the non-locality optimized plan.
-	// TODO(rytaft): This is hacky. We should really be making this determination
-	// based on the latency between regions.
-	if scan.LocalityOptimized {
-		cost /= 30 // msirek-temp
+	var regionsAccessed physical.Distribution
+	if scan.Distribution.Regions != nil {
+		regionsAccessed = scan.Distribution
+	} else {
+		tabMeta := scan.Memo().Metadata().TableMeta(scan.Table)
+		regionsAccessed.FromIndexScan(c.ctx, c.evalCtx, tabMeta, scan.Index, scan.Constraint)
+	}
+	// Scans that read rows outside of the gateway region incur a distribution
+	// cost.
+	if !regionsAccessed.Any() {
+		if len(regionsAccessed.Regions) > 1 {
+			// Non-multiregion tables may have no regions populated in
+			// regionsAccessed. To avoid potential plan regressions involving
+			// non-multiregion tables, don't add a distribution cost when
+			// `regionsAccessed.Any()` is true because query planning can't be done in
+			// that case to try and avoid the distribution anyway.
+			cost += DistributeCost
+		} else {
+			var localDist physical.Distribution
+			localDist.FromLocality(c.evalCtx.Locality)
+			if !localDist.Equals(regionsAccessed) {
+				cost += DistributeCost
+			}
+		}
 	}
 	return cost
 }
@@ -1229,9 +1256,12 @@ func isStreamingSetOperator(relation memo.RelExpr) bool {
 	return false
 }
 
-func (c *coster) computeSetCost(set memo.RelExpr) memo.Cost {
+func (c *coster) computeSetCost(set memo.RelExpr, required *physical.Required) memo.Cost {
 	// Add the CPU cost of emitting the rows.
 	outputRowCount := set.Relational().Statistics().RowCount
+	if outputRowCount != 0 && required.LimitHint != 0 {
+		outputRowCount = required.LimitHint
+	}
 	cost := memo.Cost(outputRowCount) * cpuCostFactor
 
 	// A set operation must process every row from both tables once. UnionAll and

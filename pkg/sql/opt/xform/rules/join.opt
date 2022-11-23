@@ -739,7 +739,7 @@
     $on:*
     $private:* &
         ^(IsAntiJoin $private) &
-        ^(IsLocalityOptimizedJoin $private) &
+
         (Let
             (
                 $localExpr
