@@ -100,6 +100,7 @@ func (_e *explorer) exploreLimit(
 	_rootState *exploreState,
 	_root *memo.LimitExpr,
 	_rootOrd int,
+	_required *physical.Required,
 ) (_fullyExplored bool) {
 	_fullyExplored = true
 
@@ -175,6 +176,7 @@ func (_e *explorer) exploreInnerJoin(
 	_rootState *exploreState,
 	_root *memo.InnerJoinExpr,
 	_rootOrd int,
+	_required *physical.Required,
 ) (_fullyExplored bool) {
 	_fullyExplored = true
 
@@ -284,6 +286,7 @@ func (_e *explorer) exploreLimit(
 	_rootState *exploreState,
 	_root *memo.LimitExpr,
 	_rootOrd int,
+	_required *physical.Required,
 ) (_fullyExplored bool) {
 	_fullyExplored = true
 
@@ -402,6 +405,7 @@ func (_e *explorer) exploreLimit(
 	_rootState *exploreState,
 	_root *memo.LimitExpr,
 	_rootOrd int,
+	_required *physical.Required,
 ) (_fullyExplored bool) {
 	_fullyExplored = true
 
@@ -554,6 +558,7 @@ func (_e *explorer) exploreUnion(
 	_rootState *exploreState,
 	_root *memo.UnionExpr,
 	_rootOrd int,
+	_required *physical.Required,
 ) (_fullyExplored bool) {
 	_fullyExplored = true
 

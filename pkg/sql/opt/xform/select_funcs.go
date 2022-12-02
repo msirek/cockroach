@@ -20,6 +20,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/invertedidx"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/memo"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/partition"
+	"github.com/cockroachdb/cockroach/pkg/sql/opt/props/physical"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/cockroach/pkg/util"
@@ -97,7 +98,10 @@ var _ = (*CustomFuncs).IsLocking
 //	  $outerFilter
 //	)
 func (c *CustomFuncs) GeneratePartialIndexScans(
-	grp memo.RelExpr, scanPrivate *memo.ScanPrivate, filters memo.FiltersExpr,
+	grp memo.RelExpr,
+	required *physical.Required,
+	scanPrivate *memo.ScanPrivate,
+	filters memo.FiltersExpr,
 ) {
 	// Iterate over all partial indexes.
 	var pkCols opt.ColSet
@@ -411,7 +415,10 @@ func (c *CustomFuncs) GetOptionalFiltersAndFilterColumns(
 // comments above checkColumnFilters, computedColFilters, and
 // partitionValuesFilters for more detail.
 func (c *CustomFuncs) GenerateConstrainedScans(
-	grp memo.RelExpr, scanPrivate *memo.ScanPrivate, explicitFilters memo.FiltersExpr,
+	grp memo.RelExpr,
+	required *physical.Required,
+	scanPrivate *memo.ScanPrivate,
+	explicitFilters memo.FiltersExpr,
 ) {
 	var pkCols opt.ColSet
 	var sb indexScanBuilder
@@ -854,7 +861,10 @@ func (c *CustomFuncs) partitionValuesFilters(
 // constrained is that we cannot treat an inverted index in the same way as a
 // regular index, since it does not actually contain the indexed column.
 func (c *CustomFuncs) GenerateInvertedIndexScans(
-	grp memo.RelExpr, scanPrivate *memo.ScanPrivate, filters memo.FiltersExpr,
+	grp memo.RelExpr,
+	required *physical.Required,
+	scanPrivate *memo.ScanPrivate,
+	filters memo.FiltersExpr,
 ) {
 	var pkCols opt.ColSet
 	var sb indexScanBuilder
@@ -1036,7 +1046,10 @@ func (c *CustomFuncs) canMaybeConstrainNonInvertedIndex(
 // The index join is implemented with a lookup join since the index join does
 // not support arbitrary input sources that are not plain index scans.
 func (c *CustomFuncs) GenerateZigzagJoins(
-	grp memo.RelExpr, scanPrivate *memo.ScanPrivate, filters memo.FiltersExpr,
+	grp memo.RelExpr,
+	required *physical.Required,
+	scanPrivate *memo.ScanPrivate,
+	filters memo.FiltersExpr,
 ) {
 	// Short circuit unless zigzag joins are explicitly enabled.
 	if !c.e.evalCtx.SessionData().ZigzagJoinEnabled || scanPrivate.Flags.NoZigzagJoin {
@@ -1410,7 +1423,10 @@ func (c *CustomFuncs) indexConstrainedCols(
 // two constraints, and it produces zigzag joins with the same index on both
 // sides of the zigzag join for those cases, fixed on different constant values.
 func (c *CustomFuncs) GenerateInvertedIndexZigzagJoins(
-	grp memo.RelExpr, scanPrivate *memo.ScanPrivate, filters memo.FiltersExpr,
+	grp memo.RelExpr,
+	required *physical.Required,
+	scanPrivate *memo.ScanPrivate,
+	filters memo.FiltersExpr,
 ) {
 	// Short circuit unless zigzag joins are explicitly enabled.
 	if !c.e.evalCtx.SessionData().ZigzagJoinEnabled || scanPrivate.Flags.NoZigzagJoin {
