@@ -164,13 +164,19 @@ const (
 	// stale.
 	largeMaxCardinalityScanCostPenalty = unboundedMaxCardinalityScanCostPenalty / 2
 
+	// SmallDistributeCost is the per-operation cost overhead for scans which may
+	// access remote regions, but the scanned table is unpartitioned with no lease
+	// preferences, so locality information is not available. The distribution
+	// cost is unknown, so a small overhead cost is added to give optimizations
+	// like locality-optimized search a chance to get picked.
+	SmallDistributeCost = randIOCostFactor
+
 	// DistributeCost is the per-operation cost overhead for Distribute operations
-	// or scans which access remote regions. This is set to a value in the
-	// ballpark of lookup join overhead costs, but should be refined.
+	// or scans which access remote regions.
 	// TODO(msirek): Measure actual latencies between regions and produce a table
 	//               for determining the maximum latency between the most remote
 	//               region in a distribution and the gateway region.
-	DistributeCost = randIOCostFactor
+	DistributeCost = 200
 
 	// LargeDistributeCost is the cost to use for Distribute operations when a
 	// session mode is set to error out on access of rows from remote regions.
@@ -699,10 +705,9 @@ func (c *coster) computeDistributeCost(
 		return LargeDistributeCost
 	}
 
-	// TODO(rytaft,msirek): Compute a real cost here. Currently we just add a cost
-	//                      which is on par with a lookup (in lookup join) or
-	//                      single-span read costs as a rough estimate of
-	//                      overhead, but actual measurements would be useful.
+	// TODO(rytaft,msirek): Compute a real cost here. Currently this is a rough
+	//                      estimate of latency overhead, but actual measurements
+	//                      would be useful.
 	return DistributeCost
 }
 
@@ -801,34 +806,37 @@ func (c *coster) computeScanCost(scan *memo.ScanExpr, required *physical.Require
 		tabMeta := scan.Memo().Metadata().TableMeta(scan.Table)
 		regionsAccessed.FromIndexScan(c.ctx, c.evalCtx, tabMeta, scan.Index, scan.Constraint)
 	}
-	// Scans that read rows outside of the gateway region incur a distribution
-	// cost.
-	if !regionsAccessed.Any() && !scan.LocalityOptimized {
-		extraCost := memo.Cost(DistributeCost)
-		if c.evalCtx != nil && c.evalCtx.SessionData().EnforceHomeRegion &&
-			c.evalCtx.Planner.IsANSIDML() {
-			if len(regionsAccessed.Regions) == 1 {
-				// Query plans with a home region are favored over those without one.
-				extraCost = LargeDistributeCostWithHomeRegion
-			} else {
-				extraCost = LargeDistributeCost
-			}
-		}
-		if len(regionsAccessed.Regions) > 1 {
-			// Non-multiregion tables may have no regions populated in
-			// regionsAccessed. To avoid potential plan regressions involving
-			// non-multiregion tables, don't add a distribution cost when
-			// `regionsAccessed.Any()` is true because query planning can't be done in
-			// that case to try and avoid the distribution anyway.
-			cost += extraCost
-		} else {
-			var localDist physical.Distribution
-			localDist.FromLocality(c.evalCtx.Locality)
-			if !localDist.Equals(regionsAccessed) {
-				cost += extraCost
-			}
+	if scan.LocalityOptimized {
+		return cost
+	}
+	if len(regionsAccessed.Regions) == 1 {
+		var localDist physical.Distribution
+		localDist.FromLocality(c.evalCtx.Locality)
+		if localDist.Equals(regionsAccessed) {
+			// Scans accessing only the local region don't have a remote latency cost.
+			return cost
 		}
 	}
+	// Scans that read rows outside of the gateway region incur a distribution
+	// cost.
+	extraCost := memo.Cost(DistributeCost)
+	if regionsAccessed.Any() {
+		// Non-multiregion tables may have no regions populated in regionsAccessed.
+		// To avoid potential plan regressions involving non-multiregion tables,
+		// don't add the somewhat large `DistributeCost` when
+		// `regionsAccessed.Any()` is true because query planning can't be done in
+		// that case to try and avoid the distribution anyway.
+		extraCost = memo.Cost(SmallDistributeCost)
+	} else if !regionsAccessed.Any() && c.evalCtx != nil &&
+		c.evalCtx.SessionData().EnforceHomeRegion && c.evalCtx.Planner.IsANSIDML() {
+		if len(regionsAccessed.Regions) == 1 {
+			// Query plans with a home region are favored over those without one.
+			extraCost = LargeDistributeCostWithHomeRegion
+		} else {
+			extraCost = LargeDistributeCost
+		}
+	}
+	cost += extraCost
 	return cost
 }
 
