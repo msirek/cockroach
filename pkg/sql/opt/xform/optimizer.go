@@ -12,6 +12,7 @@ package xform
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 
 	"github.com/cockroachdb/cockroach/pkg/sql/opt"
@@ -677,6 +678,10 @@ func (o *Optimizer) enforceProps(
 				enforcer.InputOrdering = lcp
 				return enforcer
 			}
+			if state.best.Op() == opt.GroupByOp {
+				i := 0
+				i++ // msirek-temp
+			}
 			if o.optimizeEnforcer(state, getEnforcer, required, member) {
 				fullyOptimized = true
 			}
@@ -689,7 +694,7 @@ func (o *Optimizer) enforceProps(
 }
 
 // optimizeEnforcer optimizes and costs the enforcer. getEnforcer is used to
-// reset the enforcer after recusing in optimizeGroup, since the current group
+// reset the enforcer after recursing in optimizeGroup, since the current group
 // and its children may use the same SortExpr to avoid allocations.
 func (o *Optimizer) optimizeEnforcer(
 	state *groupState,
@@ -764,6 +769,15 @@ func (o *Optimizer) setLowestCostTree(parent opt.Expr, parentProps *physical.Req
 	case memo.RelExpr:
 		state := o.lookupOptState(t.FirstExpr(), parentProps)
 		relParent, relCost = state.best, state.cost
+		if relParent.Op() == opt.TopKOp {
+			i := 0
+			i++ // msirek-temp
+			childProps := BuildChildPhysicalProps(o.mem, t.FirstExpr(), 0, parentProps)
+			tree := o.setLowestCostTree(t.FirstExpr().Child(0), childProps)
+			childState := o.lookupOptState(t.FirstExpr().Child(0).(memo.RelExpr).FirstExpr(), childProps)
+			fmt.Println(tree)
+			fmt.Println(childState)
+		}
 		parent = relParent
 
 	case memo.ScalarPropsExpr:
@@ -813,7 +827,22 @@ func (o *Optimizer) setLowestCostTree(parent opt.Expr, parentProps *physical.Req
 // group. If so, then the candidate becomes the new lowest cost expression.
 // ratchetCost returns true if the candidate is the new lowest-cost expression.
 func (o *Optimizer) ratchetCost(state *groupState, candidate memo.RelExpr, cost memo.Cost) bool {
+	if state.best != nil && ((candidate.Op() != opt.LookupJoinOp && state.best.Op() == opt.LookupJoinOp) ||
+		(candidate.Op() == opt.LookupJoinOp && state.best.Op() != opt.LookupJoinOp)) {
+		i := 0
+		i++ // msirek-temp
+	}
 	if state.best == nil || cost.Less(state.cost) {
+		if state.best != nil && ((candidate.Op() != opt.TopKOp && state.best.Op() == opt.TopKOp) ||
+			(candidate.Op() == opt.TopKOp && state.best.Op() != opt.TopKOp)) {
+			i := 0
+			i++ // msirek-temp
+		}
+		if state.best != nil && ((candidate.Op() != opt.SortOp && state.best.Op() == opt.SortOp && state.best.Child(0).Op() == opt.GroupByOp) ||
+			(candidate.Op() == opt.SortOp && candidate.Child(0).Op() == opt.GroupByOp && state.best.Op() != opt.SortOp)) {
+			i := 0
+			i++ // msirek-temp
+		}
 		state.best = candidate
 		state.cost = cost
 		return true

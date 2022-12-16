@@ -1316,6 +1316,10 @@ func (c *coster) computeGroupingCost(grouping memo.RelExpr, required *physical.R
 		cost += c.rowBufferCost(outputRowCount)
 	}
 
+	if streamingType == memo.Streaming {
+		i := 0
+		i++ // msirek-temp
+	}
 	return cost
 }
 

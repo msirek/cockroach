@@ -436,6 +436,10 @@ func (c *CustomFuncs) GenerateConstrainedScans(
 		// local to the gateway region.
 		prefixSorter := tabMeta.IndexPartitionLocality(index.Ordinal())
 
+		if index.Ordinal() == 4 {
+			i := 0
+			i++ // msirek-temp
+		}
 		// Build Constraints to scan a subset of the table Spans.
 		if partitionFilters, remainingFilters, combinedConstraint, ok =
 			c.MakeCombinedFiltersConstraint(

@@ -11,6 +11,8 @@
 package xform
 
 import (
+	"fmt"
+
 	"github.com/cockroachdb/cockroach/pkg/sql/opt"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/cat"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/memo"
@@ -185,15 +187,18 @@ func (c *CustomFuncs) GenerateStreamingGroupBy(
 ) {
 	orders := ordering.DeriveInterestingOrderings(input)
 	intraOrd := private.Ordering
+	groupingColumnsClosure := input.Relational().FuncDeps.ComputeClosure(private.GroupingCols)
+	fmt.Println(groupingColumnsClosure) // msirek-temp
 	for _, ord := range orders {
 		newOrd, fullPrefix, found := getPrefixFromOrdering(ord.ToOrdering(), intraOrd, input,
-			func(id opt.ColumnID) bool { return private.GroupingCols.Contains(id) })
+			func(id opt.ColumnID) bool { return groupingColumnsClosure.Contains(id) })
 		if !found || !fullPrefix {
 			continue
 		}
 
 		newPrivate := *private
 		newPrivate.Ordering = newOrd
+		// newPrivate.GroupingCols = groupingColumnsClosure.Intersection(newOrd.ColSet()) // msirek-temp
 
 		switch op {
 		case opt.GroupByOp:

@@ -11,6 +11,8 @@
 package norm
 
 import (
+	"fmt"
+
 	"github.com/cockroachdb/apd/v3"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/cat"
@@ -277,6 +279,8 @@ func (c *CustomFuncs) RedundantCols(input memo.RelExpr, cols opt.ColSet) opt.Col
 	if reducedCols.Equals(cols) {
 		return opt.ColSet{}
 	}
+	closure := input.Relational().FuncDeps.ComputeClosure(cols.Difference(reducedCols))
+	fmt.Println(closure) // msirek-temp
 	return cols.Difference(reducedCols)
 }
 
