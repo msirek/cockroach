@@ -110,9 +110,9 @@ func (ob *OutputBuilder) AddField(key, value string) {
 // AddRedactableField adds an information field under the current node, hiding
 // the value depending depending on the given redact flag.
 func (ob *OutputBuilder) AddRedactableField(flag RedactFlags, key, value string) {
-	if ob.flags.Redact.Has(flag) {
-		value = "<hidden>"
-	}
+	//if ob.flags.Redact.Has(flag) {
+	//	value = "<hidden>"
+	//}
 	ob.AddField(key, value)
 }
 
@@ -272,9 +272,9 @@ func (ob *OutputBuilder) AddTopLevelField(key, value string) {
 // AddRedactableTopLevelField adds a top-level field, hiding the value depending
 // depending on the given redact flag.
 func (ob *OutputBuilder) AddRedactableTopLevelField(redactFlag RedactFlags, key, value string) {
-	if ob.flags.Redact.Has(redactFlag) {
-		value = "<hidden>"
-	}
+	//if ob.flags.Redact.Has(redactFlag) {
+	//	value = "<hidden>"
+	//}
 	ob.AddTopLevelField(key, value)
 }
 

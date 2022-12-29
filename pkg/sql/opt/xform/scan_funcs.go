@@ -129,9 +129,9 @@ func (c *CustomFuncs) CanMaybeGenerateLocalityOptimizedScan(scanPrivate *memo.Sc
 		// multiple batches.
 		// TODO(rytaft): Revisit this when we have a more accurate cost model for
 		//               data distribution.
-		if scanPrivate.HardLimit == 0 || rowinfra.KeyLimit(scanPrivate.HardLimit) > rowinfra.ProductionKVBatchSize {
-			return false
-		}
+		//if scanPrivate.HardLimit == 0 || rowinfra.KeyLimit(scanPrivate.HardLimit) > rowinfra.ProductionKVBatchSize {
+		//	return false
+		//}
 	} else {
 		// This scan should have at least two spans, or we won't be able to move one
 		// of the spans to a separate remote scan.
@@ -179,9 +179,9 @@ func (c *CustomFuncs) LocalityOptimizedScanAboveMaxCardinality(relExpr memo.RelE
 func (c *CustomFuncs) GenerateLocalityOptimizedScan(
 	grp memo.RelExpr, required *physical.Required, scanPrivate *memo.ScanPrivate,
 ) {
-	if c.LocalityOptimizedScanAboveMaxCardinality(grp) {
-		return
-	}
+	//if c.LocalityOptimizedScanAboveMaxCardinality(grp) {
+	//	return
+	//}
 
 	tabMeta := c.e.mem.Metadata().TableMeta(scanPrivate.Table)
 	index := tabMeta.Table.Index(scanPrivate.Index)

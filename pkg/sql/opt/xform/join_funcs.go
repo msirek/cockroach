@@ -1842,6 +1842,9 @@ func (c *CustomFuncs) findInterestingDisjunctionPairForJoin(
 func (c *CustomFuncs) CanMaybeGenerateLocalityOptimizedSearchOfLookupJoins(
 	lookupJoinExpr *memo.LookupJoinExpr,
 ) (inputScan *memo.ScanExpr, inputFilters memo.FiltersExpr, ok bool) {
+	if true {
+		return nil, memo.FiltersExpr{}, false // msirek-temp
+	}
 	// Respect the session setting LocalityOptimizedSearch.
 	if !c.e.evalCtx.SessionData().LocalityOptimizedSearch {
 		return nil, memo.FiltersExpr{}, false

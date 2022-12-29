@@ -578,7 +578,7 @@ func (o *Optimizer) optimizeGroupMember(
 			childCost, childOptimized := o.optimizeExpr(member.Child(i), childRequired)
 
 			// Accumulate cost of children.
-			if member.Op() == opt.LocalityOptimizedSearchOp && i > 0 {
+			if member.Op() == opt.LocalityOptimizedSearchOp && i >= 0 {
 				// If the child ops are locality optimized, distribution costs are added
 				// to the remote branch, but not the local branch. Scale the remote
 				// branch costs by a factor reflecting the likelihood of executing that
@@ -588,7 +588,7 @@ func (o *Optimizer) optimizeGroupMember(
 				//               remote branch, e.g., compare the size of the limit hint
 				//               with the expected row count of the local branch.
 				//               Is there a better approach?
-				cost += childCost / 10
+				cost += childCost / 100
 			} else {
 				cost += childCost
 			}
