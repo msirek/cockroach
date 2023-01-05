@@ -15,7 +15,11 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/opt"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/memo"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/props"
+	"github.com/cockroachdb/cockroach/pkg/sql/sem/cast"
+	"github.com/cockroachdb/cockroach/pkg/sql/sem/eval"
+	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/volatility"
+	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/cockroach/pkg/util/intsets"
 	"github.com/cockroachdb/errors"
 )
@@ -308,6 +312,37 @@ func (c *CustomFuncs) extractVarEqualsConst(
 	return false, nil, nil
 }
 
+// checkAndMaybeGetConstantForInlining checks whether the provided constant `e`
+// is equivalent to or may be implicitly cast to type `desiredType` and
+// optionally returns the validated and potentially-casted constant if
+// `getConstant` is true.
+func (c *CustomFuncs) checkAndMaybeGetConstantForInlining(
+	e *memo.ConstExpr, desiredType *types.T, getConstant bool,
+) (scalarConst opt.ScalarExpr, ok bool) {
+	if !e.Typ.Equivalent(desiredType) {
+		var retypedConst tree.TypedExpr
+		if getConstant {
+			retypedConst, ok = eval.ReTypeWithContext(e.Value, desiredType, cast.ContextImplicit)
+		} else {
+			retypedConst, ok = eval.CanReTypeWithContextSkipCast(e.Value, desiredType, cast.ContextImplicit)
+		}
+		if !ok {
+			return nil, false
+		}
+		if !getConstant {
+			return nil, true
+		}
+		retypedConstDatum, ok := retypedConst.(tree.Datum)
+		if !ok {
+			return nil, false
+		}
+		scalarConst = c.f.ConstructConstVal(retypedConstDatum, retypedConst.ResolvedType())
+	} else {
+		scalarConst = e
+	}
+	return scalarConst, true
+}
+
 // CanInlineConstVar returns true if there is an opportunity in the filters to
 // inline a variable restricted to be a constant, as in:
 //
@@ -324,11 +359,14 @@ func (c *CustomFuncs) CanInlineConstVar(f memo.FiltersExpr) bool {
 	// value.
 	var fixedCols opt.ColSet
 	for i := range f {
-		if ok, l, _ := c.extractVarEqualsConst(f[i].Condition); ok {
+		if ok, l, e := c.extractVarEqualsConst(f[i].Condition); ok {
 			colType := c.mem.Metadata().ColumnMeta(l.Col).Type
 			if colinfo.CanHaveCompositeKeyEncoding(colType) {
 				// TODO(justin): allow inlining if the check we're doing is oblivious
 				// to composite-ness.
+				continue
+			}
+			if _, ok := c.checkAndMaybeGetConstantForInlining(e, colType, false /* getConstant */); !ok {
 				continue
 			}
 			if !fixedCols.Contains(l.Col) {
@@ -366,7 +404,11 @@ func (c *CustomFuncs) InlineConstVar(f memo.FiltersExpr) memo.FiltersExpr {
 				continue
 			}
 			if _, ok := vals[v.Col]; !ok {
-				vals[v.Col] = e
+				scalarConst, ok := c.checkAndMaybeGetConstantForInlining(e, colType, true /* getConstant */)
+				if !ok {
+					continue
+				}
+				vals[v.Col] = scalarConst
 				fixedCols.Add(v.Col)
 				usedIndices.Add(i)
 			}

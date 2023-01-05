@@ -37,25 +37,50 @@ import (
 	"github.com/lib/pq/oid"
 )
 
-// ReType ensures that the given expression evaluates to the requested type,
-// wrapping the expression in a cast if necessary. Returns ok=false if a cast
-// cannot wrap the expression because no valid cast from the expression's type
-// to the wanted type exists.
+// ReType is a wrapper for ReTypeWithContext which allows the most permissive
+// form of casting: cast.ContextExplicit
 func ReType(expr tree.TypedExpr, wantedType *types.T) (_ tree.TypedExpr, ok bool) {
-	resolvedType := expr.ResolvedType()
-	if wantedType.Family() == types.AnyFamily || resolvedType.Identical(wantedType) {
-		return expr, true
-	}
 	// TODO(#75103): For legacy reasons, we check for a valid cast in the most
 	// permissive context, ContextExplicit. To be consistent with Postgres,
 	// we should check for a valid cast in the most restrictive context,
 	// ContextImplicit.
-	if !cast.ValidCast(resolvedType, wantedType, cast.ContextExplicit) {
+	return ReTypeWithContext(expr, wantedType, cast.ContextExplicit)
+}
+
+// ReTypeWithContext ensures that the given expression evaluates to the requested type,
+// wrapping the expression in a cast if necessary. Returns ok=false if a cast
+// cannot wrap the expression because no valid cast from the expression's type
+// to the wanted type exists.
+func ReTypeWithContext(
+	expr tree.TypedExpr, wantedType *types.T, castContext cast.Context,
+) (retypedExpr tree.TypedExpr, ok bool) {
+	retypedExpr, ok = CanReTypeWithContextSkipCast(expr, wantedType, castContext)
+	if !ok {
 		return nil, false
+	}
+	if retypedExpr != nil {
+		return retypedExpr, true
 	}
 	ce := tree.NewTypedCastExpr(expr, wantedType)
 	ce.SyntaxMode = 0 // preserved pre-existing behavior
 	return ce, true
+}
+
+// CanReTypeWithContextSkipCast ensures that the given expression evaluates to
+// the requested type, returning (`expr`, `true`) if no cast is required and
+// (nil, `true`) if retyping is possible, but a cast is required (performing the
+// cast is deferred). If retyping is not possible, (nil, `false`) is returned.
+func CanReTypeWithContextSkipCast(
+	expr tree.TypedExpr, wantedType *types.T, castContext cast.Context,
+) (_ tree.TypedExpr, ok bool) {
+	resolvedType := expr.ResolvedType()
+	if wantedType.Family() == types.AnyFamily || resolvedType.Identical(wantedType) {
+		return expr, true
+	}
+	if !cast.ValidCast(resolvedType, wantedType, castContext) {
+		return nil, false
+	}
+	return nil, true
 }
 
 // PerformCast performs a cast from the provided Datum to the specified
