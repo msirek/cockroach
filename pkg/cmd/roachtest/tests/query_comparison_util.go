@@ -207,13 +207,20 @@ func runOneRoundQueryComparison(
 	until := time.After(roundTimeout)
 	done := ctx.Done()
 
-	for i := 1; ; i++ {
+	roundOrTestTimeout := func() bool {
 		select {
 		case <-until:
-			return
+			return true
 		case <-done:
-			return
+			return true
 		default:
+		}
+		return false
+	}
+
+	for i := 1; ; i++ {
+		if roundOrTestTimeout() {
+			return
 		}
 
 		const numInitialMutations = 1000
@@ -248,7 +255,16 @@ func runOneRoundQueryComparison(
 			stmtNo:     i,
 		}
 		if err := qct.run(smither, rnd, h); err != nil {
-			t.Fatal(err)
+			// The error may just be due to the timeout occurring. Don't report the
+			// error if the test timeout or 10-minute round timeout has elapsed. There
+			// might be a small chance of missing actual query mismatches if one
+			// occurs within a millisecond or so of the timeout, but the likelihood of
+			// this is very small. It's better to have a stable test. If we really
+			// care about this, we could dig into the actual error and see if we can
+			// tell if it was due to a timeout or not.
+			if !roundOrTestTimeout() {
+				t.Fatal(err)
+			}
 		}
 	}
 }
