@@ -11,6 +11,7 @@
 package sqlsmith
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/cockroachdb/cockroach/pkg/sql/randgen"
@@ -308,7 +309,7 @@ func makeCompareOp(s *Smither, typ *types.T, refs colRefs) (tree.TypedExpr, bool
 	}
 	left := makeScalar(s, typ, refs)
 	right := makeScalar(s, typ, refs)
-	return typedParen(tree.NewTypedComparisonExpr(treecmp.MakeComparisonOperator(op), left, right), typ), true
+	return typedParen(tree.NewTypedComparisonExpr(context.Background(), treecmp.MakeComparisonOperator(op), left, right), typ), true
 }
 
 func makeBinOp(s *Smither, typ *types.T, refs colRefs) (tree.TypedExpr, bool) {
@@ -688,6 +689,7 @@ func makeIn(s *Smither, typ *types.T, refs colRefs) (tree.TypedExpr, bool) {
 		op = treecmp.NotIn
 	}
 	return tree.NewTypedComparisonExpr(
+		context.Background(),
 		treecmp.MakeComparisonOperator(op),
 		// Cast any NULLs to a concrete type.
 		castType(makeScalar(s, t, refs), t),
@@ -703,6 +705,7 @@ func makeStringComparison(s *Smither, typ *types.T, refs colRefs) (tree.TypedExp
 		return nil, false
 	}
 	return tree.NewTypedComparisonExpr(
+		context.Background(),
 		stringComparison,
 		makeScalar(s, types.String, refs),
 		makeScalar(s, types.String, refs),

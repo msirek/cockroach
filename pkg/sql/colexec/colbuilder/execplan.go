@@ -2415,7 +2415,7 @@ func planProjectionOperators(
 				// resultIdx, so we simply create an ordinal referencing that
 				// column.
 				right := tree.NewTypedOrdinalReference(resultIdx, whenTyped.ResolvedType())
-				cmpExpr := tree.NewTypedComparisonExpr(treecmp.MakeComparisonOperator(treecmp.EQ), left, right)
+				cmpExpr := tree.NewTypedComparisonExpr(ctx, treecmp.MakeComparisonOperator(treecmp.EQ), left, right)
 				caseOps[i], resultIdx, typs, err = planProjectionOperators(
 					ctx, evalCtx, cmpExpr, typs, caseOps[i], acc, factory, releasables,
 				)
@@ -2502,7 +2502,7 @@ func planProjectionOperators(
 		whens := make([]*tree.When, len(t.Exprs))
 		for i := range whens {
 			whenVals[i] = tree.When{
-				Cond: t.GetWhenCondition(i),
+				Cond: t.GetWhenCondition(ctx, i),
 				Val:  t.Exprs[i],
 			}
 			whens[i] = &whenVals[i]
@@ -2595,6 +2595,7 @@ func planProjectionOperators(
 			nil, /* expr */
 			[]*tree.When{{
 				Cond: tree.NewTypedComparisonExpr(
+					ctx,
 					treecmp.MakeComparisonOperator(treecmp.EQ),
 					t.Expr1.(tree.TypedExpr),
 					t.Expr2.(tree.TypedExpr),

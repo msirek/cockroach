@@ -2279,7 +2279,12 @@ func typeCheckComparisonOp(
 	// defined to return NULL anyways. Should the SQL dialect ever be extended with
 	// comparisons that can return non-NULL on NULL input, the `inBinOp` parameter
 	// may need altering.
-	s := getOverloadTypeChecker(ops, foldedLeft, foldedRight)
+	var s *overloadTypeChecker
+	if switched {
+		s = getOverloadTypeChecker(ops, foldedRight, foldedLeft)
+	} else {
+		s = getOverloadTypeChecker(ops, foldedLeft, foldedRight)
+	}
 	defer s.release()
 	if err := s.typeCheckOverloadedExprs(ctx, semaCtx, types.Any, true); err != nil {
 		return nil, nil, nil, false, err

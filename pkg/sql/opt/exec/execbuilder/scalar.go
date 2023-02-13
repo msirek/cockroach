@@ -255,7 +255,7 @@ func (b *Builder) buildComparison(
 	}
 
 	operator := opt.ComparisonOpReverseMap[scalar.Op()]
-	return tree.NewTypedComparisonExpr(treecmp.MakeComparisonOperator(operator), left, right), nil
+	return tree.NewTypedComparisonExpr(b.ctx, treecmp.MakeComparisonOperator(operator), left, right), nil
 }
 
 func (b *Builder) buildUnary(ctx *buildScalarCtx, scalar opt.ScalarExpr) (tree.TypedExpr, error) {
@@ -452,6 +452,7 @@ func (b *Builder) buildAnyScalar(
 
 	cmp := opt.ComparisonOpReverseMap[any.Cmp]
 	return tree.NewTypedComparisonExprWithSubOp(
+		b.ctx,
 		treecmp.MakeComparisonOperator(treecmp.Any),
 		treecmp.MakeComparisonOperator(cmp),
 		left,
@@ -573,6 +574,7 @@ func (b *Builder) buildAny(ctx *buildScalarCtx, scalar opt.ScalarExpr) (tree.Typ
 
 	cmp := opt.ComparisonOpReverseMap[any.Cmp]
 	return tree.NewTypedComparisonExprWithSubOp(
+		b.ctx,
 		treecmp.MakeComparisonOperator(treecmp.Any),
 		treecmp.MakeComparisonOperator(cmp),
 		scalarExpr,

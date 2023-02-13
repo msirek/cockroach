@@ -1,4 +1,20 @@
-import file=tpcc_schema
+exec-ddl
+CREATE TABLE t0 (c0 INT);
+----
+
+opt
+SELECT * FROM t0 WHERE (ARRAY[]::TIMESTAMPTZ[] <
+SOME ((NULLIF(ARRAY[TIMESTAMPTZ '1969-12-29T21:20:13+01'], ARRAY[]::TIMESTAMPTZ[])), ARRAY[NULL]));
+----
+
+opt
+SELECT * FROM t0 WHERE (ARRAY[]::TIMESTAMPTZ[] >
+SOME ((NULLIF(ARRAY[TIMESTAMPTZ '1969-12-29T21:20:13+01'], ARRAY[]::TIMESTAMPTZ[])), ARRAY[NULL]));
+----
+
+
+opt
+SELECT b'hello,\x32world' = B'101';
 ----
 
 exec-ddl

@@ -238,7 +238,7 @@ func normalizeComparisonExpr(v *Visitor, expr *tree.ComparisonExpr) tree.TypedEx
 				exprCopied = true
 			}
 
-			expr = tree.NewTypedComparisonExpr(invertedOp, expr.TypedRight(), expr.TypedLeft())
+			expr = tree.NewTypedComparisonExpr(v.ctx, invertedOp, expr.TypedRight(), expr.TypedLeft())
 		} else if !v.isConst(expr.Right) {
 			return expr
 		}
@@ -278,7 +278,7 @@ func normalizeComparisonExpr(v *Visitor, expr *tree.ComparisonExpr) tree.TypedEx
 		if v.isConst(left) && !v.isConst(right) {
 			// Switch operand order so that constant expression is on the right.
 			// This helps support index selection rules.
-			return tree.NewTypedComparisonExpr(expr.Operator, right, left)
+			return tree.NewTypedComparisonExpr(v.ctx, expr.Operator, right, left)
 		}
 	case treecmp.NE,
 		treecmp.Like, treecmp.NotLike,
@@ -404,7 +404,7 @@ func normalizeRangeCond(v *Visitor, expr *tree.RangeCond) tree.TypedExpr {
 		if from == tree.DNull {
 			newLeft = tree.DNull
 		} else {
-			newLeft = normalizeExpr(v, tree.NewTypedComparisonExpr(
+			newLeft = normalizeExpr(v, tree.NewTypedComparisonExpr(v.ctx,
 				treecmp.MakeComparisonOperator(leftCmp), leftFrom, from),
 			)
 			if v.err != nil {
@@ -414,7 +414,7 @@ func normalizeRangeCond(v *Visitor, expr *tree.RangeCond) tree.TypedExpr {
 		if to == tree.DNull {
 			newRight = tree.DNull
 		} else {
-			newRight = normalizeExpr(v, tree.NewTypedComparisonExpr(
+			newRight = normalizeExpr(v, tree.NewTypedComparisonExpr(v.ctx,
 				treecmp.MakeComparisonOperator(rightCmp), leftTo, to,
 			))
 			if v.err != nil {

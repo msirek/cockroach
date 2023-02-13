@@ -11,6 +11,8 @@
 package sqlsmith
 
 import (
+	"context"
+
 	"github.com/cockroachdb/cockroach/pkg/sql/randgen"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree/treecmp"
@@ -287,10 +289,10 @@ func makeAndedJoinCond(
 		_, expressionsAreComparable := tree.CmpOps[treecmp.LT].LookupImpl(v[0].ResolvedType(), v[1].ResolvedType())
 		useEQ := cond == nil || onlyEqualityPreds || !expressionsAreComparable || s.coin()
 		if useEQ {
-			expr = tree.NewTypedComparisonExpr(treecmp.MakeComparisonOperator(treecmp.EQ), v[0], v[1])
+			expr = tree.NewTypedComparisonExpr(context.Background(), treecmp.MakeComparisonOperator(treecmp.EQ), v[0], v[1])
 		} else {
 			idx := s.rnd.Intn(len(otherOps))
-			expr = tree.NewTypedComparisonExpr(treecmp.MakeComparisonOperator(otherOps[idx]), v[0], v[1])
+			expr = tree.NewTypedComparisonExpr(context.Background(), treecmp.MakeComparisonOperator(otherOps[idx]), v[0], v[1])
 		}
 		if cond == nil {
 			cond = expr
@@ -429,6 +431,7 @@ func makeMergeJoinExpr(s *Smither, _ colRefs, forJoin bool) (tree.TableExpr, col
 		v := cols[0]
 		cols = cols[1:]
 		expr := tree.NewTypedComparisonExpr(
+			context.Background(),
 			treecmp.MakeComparisonOperator(treecmp.EQ),
 			typedParen(v[0].item, v[0].typ),
 			typedParen(v[1].item, v[1].typ),

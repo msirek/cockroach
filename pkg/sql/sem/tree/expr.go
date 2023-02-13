@@ -394,20 +394,22 @@ func (node *ComparisonExpr) Format(ctx *FmtCtx) {
 }
 
 // NewTypedComparisonExpr returns a new ComparisonExpr that is verified to be well-typed.
-func NewTypedComparisonExpr(op treecmp.ComparisonOperator, left, right TypedExpr) *ComparisonExpr {
+func NewTypedComparisonExpr(
+	ctx context.Context, op treecmp.ComparisonOperator, left, right TypedExpr,
+) *ComparisonExpr {
 	node := &ComparisonExpr{Operator: op, Left: left, Right: right}
 	node.typ = types.Bool
-	MemoizeComparisonExprOp(node)
+	MemoizeComparisonExprOp(ctx, node)
 	return node
 }
 
 // NewTypedComparisonExprWithSubOp returns a new ComparisonExpr that is verified to be well-typed.
 func NewTypedComparisonExprWithSubOp(
-	op, subOp treecmp.ComparisonOperator, left, right TypedExpr,
+	ctx context.Context, op, subOp treecmp.ComparisonOperator, left, right TypedExpr,
 ) *ComparisonExpr {
 	node := &ComparisonExpr{Operator: op, SubOperator: subOp, Left: left, Right: right}
 	node.typ = types.Bool
-	MemoizeComparisonExprOp(node)
+	MemoizeComparisonExprOp(ctx, node)
 	return node
 }
 
@@ -461,37 +463,40 @@ func NewTypedIfErrExpr(cond, orElse, errCode TypedExpr) *IfErrExpr {
 // TODO(ajwerner): It feels dangerous to leave this to the caller to set.
 // Should we rework the construction and access to the underlying Op to
 // enforce safety?
-func MemoizeComparisonExprOp(node *ComparisonExpr) {
-	fOp, fLeft, fRight, _, _ := FoldComparisonExpr(node.Operator, node.Left, node.Right)
-	leftRet, rightRet := fLeft.(TypedExpr).ResolvedType(), fRight.(TypedExpr).ResolvedType()
+func MemoizeComparisonExprOp(ctx context.Context, node *ComparisonExpr) {
+	//fOp, fLeft, fRight, _, _ := FoldComparisonExpr(node.Operator, node.Left, node.Right)
+	//leftRet, rightRet := fLeft.(TypedExpr).ResolvedType(), fRight.(TypedExpr).ResolvedType()
 	switch node.Operator.Symbol {
 	case treecmp.Any, treecmp.Some, treecmp.All:
 		// Array operators memoize the SubOperator's CmpOp.
-		fOp, _, _, _, _ = FoldComparisonExpr(node.SubOperator, nil, nil)
+		//fOp, _, _, _, _ = FoldComparisonExpr(node.SubOperator, nil, nil)
 		// The right operand is either an array or a tuple/subquery.
-		switch rightRet.Family() {
-		case types.ArrayFamily:
-			// For example:
-			//   x = ANY(ARRAY[1,2])
-			rightRet = rightRet.ArrayContents()
-		case types.TupleFamily:
-			// For example:
-			//   x = ANY(SELECT y FROM t)
-			//   x = ANY(1,2)
-			if len(rightRet.TupleContents()) > 0 {
-				rightRet = rightRet.TupleContents()[0]
-			} else {
-				rightRet = leftRet
-			}
-		}
+		//switch rightRet.Family() {
+		//case types.ArrayFamily:
+		//	// For example:
+		//	//   x = ANY(ARRAY[1,2])
+		//	rightRet = rightRet.ArrayContents()
+		//case types.TupleFamily:
+		//	// For example:
+		//	//   x = ANY(SELECT y FROM t)
+		//	//   x = ANY(1,2)
+		//	if len(rightRet.TupleContents()) > 0 {
+		//		rightRet = rightRet.TupleContents()[0]
+		//	} else {
+		//		rightRet = leftRet
+		//	}
+		//}
 	}
 
-	fn, ok := CmpOps[fOp.Symbol].LookupImpl(leftRet, rightRet)
-	if !ok {
+	semaCtx := MakeSemaContext()
+
+	//fn, ok := CmpOps[fOp.Symbol].LookupImpl(leftRet, rightRet)
+	//_, _, fn, _, err := typeCheckComparisonOp(ctx, &semaCtx, fOp, fLeft, fRight) // msirek-temp
+	_, err := node.TypeCheck(ctx, &semaCtx, types.Any)
+	if err != nil {
 		panic(errors.AssertionFailedf("lookup for ComparisonExpr %s's CmpOp failed",
 			AsStringWithFlags(node, FmtShowTypes)))
 	}
-	node.Op = fn
 }
 
 // TypedLeft returns the ComparisonExpr's left expression as a TypedExpr.
@@ -727,7 +732,7 @@ func (node *CoalesceExpr) Format(ctx *FmtCtx) {
 
 // GetWhenCondition builds the WHEN condition to use for the ith expression
 // inside the Coalesce.
-func (node *CoalesceExpr) GetWhenCondition(i int) (whenCond Expr) {
+func (node *CoalesceExpr) GetWhenCondition(ctx context.Context, i int) (whenCond Expr) {
 	leftExpr := node.Exprs[i].(TypedExpr)
 	rightExpr := DNull
 	// IsDistinctFrom is listed as IsNotDistinctFrom in CmpOps.
@@ -737,6 +742,7 @@ func (node *CoalesceExpr) GetWhenCondition(i int) (whenCond Expr) {
 	// Otherwise, use IS NOT NULL.
 	if ok {
 		whenCond = NewTypedComparisonExpr(
+			ctx,
 			treecmp.MakeComparisonOperator(treecmp.IsDistinctFrom),
 			leftExpr,
 			rightExpr,
