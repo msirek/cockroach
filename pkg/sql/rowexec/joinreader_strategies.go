@@ -187,15 +187,16 @@ func (s *joinReaderNoOrderingStrategy) generateRemoteSpans() (roachpb.Spans, []i
 		return nil, nil, errors.AssertionFailedf("generateRemoteSpans can only be called for locality optimized lookup joins")
 	}
 
-	if s.EvalCtx.Planner.EnforceHomeRegion() {
+	s.remoteSpansGenerated = true
+	spans, spanIDs, err := gen.generateRemoteSpans(s.Ctx(), s.inputRows)
+	if s.EvalCtx.Planner.EnforceHomeRegion() && err == nil && len(spans) > 0 {
 		err := noHomeRegionError
 		if s.EvalCtx.SessionData().EnforceHomeRegionFollowerReadsEnabled {
 			err = execinfra.NewDynamicQueryHasNoHomeRegionError(err)
 		}
 		return nil, nil, err
 	}
-	s.remoteSpansGenerated = true
-	return gen.generateRemoteSpans(s.Ctx(), s.inputRows)
+	return spans, spanIDs, err
 }
 
 func (s *joinReaderNoOrderingStrategy) generatedRemoteSpans() bool {
@@ -599,15 +600,17 @@ func (s *joinReaderOrderingStrategy) generateRemoteSpans() (roachpb.Spans, []int
 	if !ok {
 		return nil, nil, errors.AssertionFailedf("generateRemoteSpans can only be called for locality optimized lookup joins")
 	}
-	if s.EvalCtx.Planner.EnforceHomeRegion() {
+
+	s.remoteSpansGenerated = true
+	spans, spanIDs, err := gen.generateRemoteSpans(s.Ctx(), s.inputRows)
+	if s.EvalCtx.Planner.EnforceHomeRegion() && err == nil && len(spans) > 0 {
 		err := noHomeRegionError
 		if s.EvalCtx.SessionData().EnforceHomeRegionFollowerReadsEnabled {
 			err = execinfra.NewDynamicQueryHasNoHomeRegionError(err)
 		}
 		return nil, nil, err
 	}
-	s.remoteSpansGenerated = true
-	return gen.generateRemoteSpans(s.Ctx(), s.inputRows)
+	return spans, spanIDs, err
 }
 
 func (s *joinReaderOrderingStrategy) generatedRemoteSpans() bool {

@@ -1146,6 +1146,22 @@ statement ok
 ROLLBACK TO SAVEPOINT foo
 
 statement ok
+CREATE TABLE messages_rbt2 (
+    account_id INT,
+    message_id   UUID DEFAULT gen_random_uuid(),
+    message    STRING
+) LOCALITY REGIONAL BY TABLE
+
+statement ok
+INSERT INTO messages_rbt2 (account_id, message) VALUES (null, null);
+
+# A locality-optimized lookup join with a null key lookup should not error out
+query T
+SELECT rbr.message FROM messages_rbt2 rbt INNER LOOKUP JOIN messages_rbr rbr
+       ON rbr.account_id = rbt.account_id LIMIT 1
+----
+
+statement ok
 COMMIT
 
 statement ok
