@@ -37,6 +37,29 @@ import (
 	"github.com/cockroachdb/logtags"
 )
 
+type idxBackfiller interface {
+	OutputTypes() []*types.T
+	MustBeStreaming() bool
+	constructIndexEntries(
+		ctx context.Context, indexEntriesCh chan indexEntryBatch,
+	) error
+	ingestIndexEntries(
+		ctx context.Context,
+		indexEntryCh <-chan indexEntryBatch,
+		progCh chan execinfrapb.RemoteProducerMetadata_BulkProcessorProgress,
+	) error
+	runBackfill(
+		ctx context.Context, progCh chan execinfrapb.RemoteProducerMetadata_BulkProcessorProgress,
+	) error
+	Run(ctx context.Context, output execinfra.RowReceiver)
+	wrapDupError(ctx context.Context, orig error) error
+	getProgressReportInterval() time.Duration
+	buildIndexEntryBatch(
+		tctx context.Context, sp roachpb.Span, readAsOf hlc.Timestamp,
+	) (roachpb.Key, []rowenc.IndexEntry, int64, error)
+	Resume(output execinfra.RowReceiver)
+}
+
 // indexBackfiller is a processor that backfills new indexes.
 type indexBackfiller struct {
 	backfill.IndexBackfiller
@@ -57,6 +80,8 @@ type indexBackfiller struct {
 
 var _ execinfra.Processor = &indexBackfiller{}
 
+var _ idxBackfiller = &indexBackfiller{}
+
 var backfillerBufferSize = settings.RegisterByteSizeSetting(
 	settings.TenantWritable,
 	"schemachanger.backfiller.buffer_size", "the initial size of the BulkAdder buffer handling index backfills", 32<<20,
@@ -66,6 +91,40 @@ var backfillerMaxBufferSize = settings.RegisterByteSizeSetting(
 	settings.TenantWritable,
 	"schemachanger.backfiller.max_buffer_size", "the maximum size of the BulkAdder buffer handling index backfills", 512<<20,
 )
+
+type starTreeIndexBackfiller struct {
+	indexBackfiller
+}
+
+var _ execinfra.Processor = &starTreeIndexBackfiller{}
+
+var _ idxBackfiller = &starTreeIndexBackfiller{}
+
+func newStarTreeIndexBackfiller(
+	ctx context.Context,
+	flowCtx *execinfra.FlowCtx,
+	processorID int32,
+	spec execinfrapb.BackfillerSpec,
+) (*starTreeIndexBackfiller, error) {
+	indexBackfillerMon := execinfra.NewMonitor(ctx, flowCtx.Cfg.BackfillerMonitor,
+		"star-tree-index-backfill-mon")
+	ib := &starTreeIndexBackfiller{
+		indexBackfiller: indexBackfiller{
+			desc:        flowCtx.TableDescriptor(ctx, &spec.Table),
+			spec:        spec,
+			flowCtx:     flowCtx,
+			processorID: processorID,
+			filter:      backfill.IndexMutationFilter,
+		},
+	}
+
+	if err := ib.IndexBackfiller.InitForDistributedUse(ctx, flowCtx, ib.desc,
+		indexBackfillerMon); err != nil {
+		return nil, err
+	}
+
+	return ib, nil
+}
 
 func newIndexBackfiller(
 	ctx context.Context,

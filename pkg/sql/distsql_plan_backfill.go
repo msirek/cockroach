@@ -75,6 +75,24 @@ func initIndexBackfillMergerSpec(
 	}, nil
 }
 
+func initIndexStarTreeBackfillerSpec(
+	desc descpb.TableDescriptor,
+	writeAsOf, readAsOf hlc.Timestamp,
+	writeAtBatchTimestamp bool,
+	chunkSize int64,
+	indexesToBackfill []descpb.IndexID,
+) (execinfrapb.BackfillerSpec, error) {
+	return execinfrapb.BackfillerSpec{
+		Table:                 desc,
+		WriteAsOf:             writeAsOf,
+		WriteAtBatchTimestamp: writeAtBatchTimestamp,
+		ReadAsOf:              readAsOf,
+		Type:                  execinfrapb.BackfillerSpec_StarTreeIndex,
+		ChunkSize:             chunkSize,
+		IndexesToBackfill:     indexesToBackfill,
+	}, nil
+}
+
 // createBackfiller generates a plan consisting of index/column backfiller
 // processors, one for each node that has spans that we are reading. The plan is
 // finalized.
