@@ -1,0 +1,381 @@
+####################
+#  InsertFastPath  #
+####################
+
+exec-ddl
+CREATE TABLE t (
+  k INT PRIMARY KEY,
+  r STRING NOT NULL,
+  a INT,
+  b INT,
+  INDEX (r, a) WHERE k != 1,
+  UNIQUE WITHOUT INDEX (a) WHERE k != 1,
+  CHECK (r IN ('east', 'west'))
+)
+----
+
+# Fast path is allowed when the index used for checking has the same
+# predicate as the UNIQUE WITHOUT INDEX constraint.
+opt expect=InsertFastPath
+INSERT INTO t VALUES (1, 'east', 10, 100)
+----
+insert t
+ ├── columns: <none>
+ ├── insert-mapping:
+ │    ├── column1:7 => t.k:1
+ │    ├── column2:8 => t.r:2
+ │    ├── column3:9 => t.a:3
+ │    └── column4:10 => t.b:4
+ ├── check columns: check1:11
+ ├── partial index put columns: partial_index_put1:12
+ ├── cardinality: [0 - 0]
+ ├── volatile, mutations
+ ├── values
+ │    ├── columns: column1:7!null column2:8!null column3:9!null column4:10!null check1:11!null partial_index_put1:12!null
+ │    ├── cardinality: [1 - 1]
+ │    ├── key: ()
+ │    ├── fd: ()-->(7-12)
+ │    └── (1, 'east', 10, 100, true, false)
+ └── unique-checks
+      └── unique-checks-item: t(a)
+           ├── values
+           │    ├── columns: a:21!null
+           │    ├── cardinality: [0 - 0]
+           │    ├── key: ()
+           │    └── fd: ()-->(21)
+           └── index-join t
+                ├── columns: t.k:23!null t.r:24!null t.a:25!null t.b:26
+                ├── key: (23)
+                ├── fd: ()-->(25), (23)-->(24,26)
+                └── scan t@t_r_a_idx,partial
+                     ├── columns: t.k:23!null t.r:24!null t.a:25!null
+                     ├── constraint: /24/25/23
+                     │    ├── [/'east'/10 - /'east'/10]
+                     │    └── [/'west'/10 - /'west'/10]
+                     ├── key: (23)
+                     └── fd: ()-->(25), (23)-->(24)
+
+# Fast path is allowed when the index used for checking has the same
+# predicate as the UNIQUE WITHOUT INDEX constraint, no matter the value
+# of `k` in the insert row.
+opt expect=InsertFastPath
+INSERT INTO t VALUES (2, 'east', 10, 100)
+----
+insert t
+ ├── columns: <none>
+ ├── insert-mapping:
+ │    ├── column1:7 => t.k:1
+ │    ├── column2:8 => t.r:2
+ │    ├── column3:9 => t.a:3
+ │    └── column4:10 => t.b:4
+ ├── check columns: check1:11
+ ├── partial index put columns: partial_index_put1:12
+ ├── cardinality: [0 - 0]
+ ├── volatile, mutations
+ ├── values
+ │    ├── columns: column1:7!null column2:8!null column3:9!null column4:10!null check1:11!null partial_index_put1:12!null
+ │    ├── cardinality: [1 - 1]
+ │    ├── key: ()
+ │    ├── fd: ()-->(7-12)
+ │    └── (2, 'east', 10, 100, true, true)
+ └── unique-checks
+      └── unique-checks-item: t(a)
+           ├── project
+           │    ├── columns: a:21!null
+           │    ├── cardinality: [0 - 1]
+           │    ├── key: ()
+           │    ├── fd: ()-->(21)
+           │    └── project
+           │         ├── columns: a:21!null
+           │         ├── cardinality: [0 - 1]
+           │         ├── key: ()
+           │         ├── fd: ()-->(21)
+           │         └── inner-join (cross)
+           │              ├── columns: t.k:13!null t.a:15!null a:21!null
+           │              ├── cardinality: [0 - 1]
+           │              ├── multiplicity: left-rows(zero-or-one), right-rows(exactly-one)
+           │              ├── key: ()
+           │              ├── fd: ()-->(13,15,21)
+           │              ├── values
+           │              │    ├── columns: a:21!null
+           │              │    ├── cardinality: [1 - 1]
+           │              │    ├── key: ()
+           │              │    ├── fd: ()-->(21)
+           │              │    └── (10,)
+           │              ├── scan t@t_r_a_idx,partial
+           │              │    ├── columns: t.k:13!null t.a:15!null
+           │              │    ├── constraint: /14/15/13
+           │              │    │    ├── [/'east'/10 - /'east'/10/1]
+           │              │    │    ├── [/'east'/10/3 - /'east'/10]
+           │              │    │    ├── [/'west'/10 - /'west'/10/1]
+           │              │    │    └── [/'west'/10/3 - /'west'/10]
+           │              │    ├── limit: 1
+           │              │    ├── key: ()
+           │              │    └── fd: ()-->(13,15)
+           │              └── filters (true)
+           └── index-join t
+                ├── columns: t.k:23!null t.r:24!null t.a:25!null t.b:26
+                ├── key: (23)
+                ├── fd: ()-->(25), (23)-->(24,26)
+                └── scan t@t_r_a_idx,partial
+                     ├── columns: t.k:23!null t.r:24!null t.a:25!null
+                     ├── constraint: /24/25/23
+                     │    ├── [/'east'/10 - /'east'/10]
+                     │    └── [/'west'/10 - /'west'/10]
+                     ├── key: (23)
+                     └── fd: ()-->(25), (23)-->(24)
+
+exec-ddl
+DROP TABLE t
+----
+
+exec-ddl
+CREATE TABLE t (
+  k INT PRIMARY KEY,
+  r STRING NOT NULL,
+  a INT,
+  b INT,
+  INDEX (a, k), 
+  UNIQUE WITHOUT INDEX (a) WHERE k > 1,
+  CHECK (r IN ('east', 'west'))
+)
+----
+
+# Fast path not allowed when the index used for checking does not have a
+# predicate and the UNIQUE WITHOUT INDEX constraint does.
+opt expect-not=InsertFastPath
+INSERT INTO t VALUES (2, 'east', 10, 100)
+----
+insert t
+ ├── columns: <none>
+ ├── insert-mapping:
+ │    ├── column1:7 => t.k:1
+ │    ├── column2:8 => t.r:2
+ │    ├── column3:9 => t.a:3
+ │    └── column4:10 => t.b:4
+ ├── check columns: check1:11
+ ├── cardinality: [0 - 0]
+ ├── volatile, mutations
+ ├── values
+ │    ├── columns: column1:7!null column2:8!null column3:9!null column4:10!null check1:11!null
+ │    ├── cardinality: [1 - 1]
+ │    ├── key: ()
+ │    ├── fd: ()-->(7-11)
+ │    └── (2, 'east', 10, 100, true)
+ └── unique-checks
+      └── unique-checks-item: t(a)
+           ├── project
+           │    ├── columns: a:20!null
+           │    ├── cardinality: [0 - 1]
+           │    ├── key: ()
+           │    ├── fd: ()-->(20)
+           │    └── project
+           │         ├── columns: a:20!null
+           │         ├── cardinality: [0 - 1]
+           │         ├── key: ()
+           │         ├── fd: ()-->(20)
+           │         └── inner-join (cross)
+           │              ├── columns: t.k:12!null t.a:14!null a:20!null
+           │              ├── cardinality: [0 - 1]
+           │              ├── multiplicity: left-rows(zero-or-one), right-rows(exactly-one)
+           │              ├── key: ()
+           │              ├── fd: ()-->(12,14,20)
+           │              ├── values
+           │              │    ├── columns: a:20!null
+           │              │    ├── cardinality: [1 - 1]
+           │              │    ├── key: ()
+           │              │    ├── fd: ()-->(20)
+           │              │    └── (10,)
+           │              ├── scan t@t_a_k_idx
+           │              │    ├── columns: t.k:12!null t.a:14!null
+           │              │    ├── constraint: /14/12: [/10/3 - /10]
+           │              │    ├── limit: 1
+           │              │    ├── key: ()
+           │              │    └── fd: ()-->(12,14)
+           │              └── filters (true)
+           └── index-join t
+                ├── columns: t.k:22!null t.r:23!null t.a:24!null t.b:25
+                ├── key: (22)
+                ├── fd: ()-->(24), (22)-->(23,25)
+                └── scan t@t_a_k_idx
+                     ├── columns: t.k:22!null t.a:24!null
+                     ├── constraint: /24/22: [/10/2 - /10]
+                     ├── key: (22)
+                     └── fd: ()-->(24)
+
+exec-ddl
+DROP TABLE t
+----
+
+exec-ddl
+CREATE TABLE t (
+  k INT PRIMARY KEY,
+  r STRING NOT NULL,
+  a INT,
+  b INT,
+  INDEX (a, k) WHERE k != 1 AND k != 2,
+  UNIQUE WITHOUT INDEX (a) WHERE k != 1,
+  CHECK (r IN ('east', 'west'))
+)
+----
+
+# Fast path not allowed with a UNIQUE WITHOUT INDEX constraint and multi-row
+# insert.
+opt expect-not=InsertFastPath
+INSERT INTO t VALUES (2, 'east', 10, 100), (3, 'west', 20, 200)
+----
+insert t
+ ├── columns: <none>
+ ├── insert-mapping:
+ │    ├── column1:7 => t.k:1
+ │    ├── column2:8 => t.r:2
+ │    ├── column3:9 => t.a:3
+ │    └── column4:10 => t.b:4
+ ├── check columns: check1:11
+ ├── partial index put columns: partial_index_put1:12
+ ├── input binding: &1
+ ├── cardinality: [0 - 0]
+ ├── volatile, mutations
+ ├── project
+ │    ├── columns: partial_index_put1:12!null check1:11!null column1:7!null column2:8!null column3:9!null column4:10!null
+ │    ├── cardinality: [2 - 2]
+ │    ├── fd: (7)-->(12), (8)-->(11)
+ │    ├── values
+ │    │    ├── columns: column1:7!null column2:8!null column3:9!null column4:10!null
+ │    │    ├── cardinality: [2 - 2]
+ │    │    ├── (2, 'east', 10, 100)
+ │    │    └── (3, 'west', 20, 200)
+ │    └── projections
+ │         ├── (column1:7 != 1) AND (column1:7 != 2) [as=partial_index_put1:12, outer=(7)]
+ │         └── column2:8 IN ('east', 'west') [as=check1:11, outer=(8)]
+ └── unique-checks
+      └── unique-checks-item: t(a)
+           ├── project
+           │    ├── columns: a:21!null
+           │    ├── cardinality: [0 - 2]
+           │    └── semi-join (hash)
+           │         ├── columns: k:19!null a:21!null
+           │         ├── cardinality: [0 - 2]
+           │         ├── select
+           │         │    ├── columns: k:19!null a:21!null
+           │         │    ├── cardinality: [0 - 2]
+           │         │    ├── with-scan &1
+           │         │    │    ├── columns: k:19!null a:21!null
+           │         │    │    ├── mapping:
+           │         │    │    │    ├──  column1:7 => k:19
+           │         │    │    │    └──  column3:9 => a:21
+           │         │    │    └── cardinality: [2 - 2]
+           │         │    └── filters
+           │         │         └── k:19 != 1 [outer=(19), constraints=(/19: (/NULL - /0] [/2 - ]; tight)]
+           │         ├── scan t
+           │         │    ├── columns: t.k:13!null t.a:15
+           │         │    ├── constraint: /13
+           │         │    │    ├── [ - /0]
+           │         │    │    └── [/2 - ]
+           │         │    ├── key: (13)
+           │         │    └── fd: (13)-->(15)
+           │         └── filters
+           │              ├── a:21 = t.a:15 [outer=(15,21), constraints=(/15: (/NULL - ]; /21: (/NULL - ]), fd=(15)==(21), (21)==(15)]
+           │              └── k:19 != t.k:13 [outer=(13,19), constraints=(/13: (/NULL - ]; /19: (/NULL - ])]
+           └── values
+                ├── cardinality: [0 - 0]
+                └── key: ()
+
+exec-ddl
+DROP TABLE t
+----
+
+exec-ddl
+CREATE TABLE t (
+  k INT PRIMARY KEY,
+  r STRING NOT NULL,
+  a INT,
+  b INT AS (k % 9) STORED,
+  INDEX (b, r, a),
+  UNIQUE WITHOUT INDEX (a),
+  CHECK (r IN ('east', 'west'))
+)
+----
+
+# A computed leading index column allows fast path uniqueness checks.
+opt expect-not=InsertFastPath
+INSERT INTO t (k, r, a) VALUES (2, 'east', 10)
+----
+insert t
+ ├── columns: <none>
+ ├── insert-mapping:
+ │    ├── column1:7 => t.k:1
+ │    ├── column2:8 => t.r:2
+ │    ├── column3:9 => t.a:3
+ │    └── b_comp:10 => t.b:4
+ ├── check columns: check1:11
+ ├── cardinality: [0 - 0]
+ ├── volatile, mutations
+ ├── values
+ │    ├── columns: column1:7!null column2:8!null column3:9!null b_comp:10!null check1:11!null
+ │    ├── cardinality: [1 - 1]
+ │    ├── key: ()
+ │    ├── fd: ()-->(7-11)
+ │    └── (2, 'east', 10, 2, true)
+ └── unique-checks
+      └── unique-checks-item: t(a)
+           ├── project
+           │    ├── columns: a:20!null
+           │    ├── cardinality: [0 - 1]
+           │    ├── key: ()
+           │    ├── fd: ()-->(20)
+           │    └── project
+           │         ├── columns: a:20!null
+           │         ├── cardinality: [0 - 1]
+           │         ├── key: ()
+           │         ├── fd: ()-->(20)
+           │         └── inner-join (cross)
+           │              ├── columns: t.k:12!null t.a:14!null a:20!null
+           │              ├── cardinality: [0 - 1]
+           │              ├── multiplicity: left-rows(zero-or-one), right-rows(exactly-one)
+           │              ├── key: ()
+           │              ├── fd: ()-->(12,14,20)
+           │              ├── values
+           │              │    ├── columns: a:20!null
+           │              │    ├── cardinality: [1 - 1]
+           │              │    ├── key: ()
+           │              │    ├── fd: ()-->(20)
+           │              │    └── (10,)
+           │              ├── limit
+           │              │    ├── columns: t.k:12!null t.a:14!null
+           │              │    ├── cardinality: [0 - 1]
+           │              │    ├── key: ()
+           │              │    ├── fd: ()-->(12,14)
+           │              │    ├── select
+           │              │    │    ├── columns: t.k:12!null t.a:14!null
+           │              │    │    ├── key: (12)
+           │              │    │    ├── fd: ()-->(14)
+           │              │    │    ├── limit hint: 1.00
+           │              │    │    ├── scan t
+           │              │    │    │    ├── columns: t.k:12!null t.a:14
+           │              │    │    │    ├── constraint: /12
+           │              │    │    │    │    ├── [ - /1]
+           │              │    │    │    │    └── [/3 - ]
+           │              │    │    │    ├── key: (12)
+           │              │    │    │    ├── fd: (12)-->(14)
+           │              │    │    │    └── limit hint: 35.71
+           │              │    │    └── filters
+           │              │    │         └── t.a:14 = 10 [outer=(14), constraints=(/14: [/10 - /10]; tight), fd=()-->(14)]
+           │              │    └── 1
+           │              └── filters (true)
+           └── select
+                ├── columns: t.k:22!null t.r:23!null t.a:24!null t.b:25
+                ├── cardinality: [0 - 1]
+                ├── key: ()
+                ├── fd: ()-->(22-25)
+                ├── scan t
+                │    ├── columns: t.k:22!null t.r:23!null t.a:24 t.b:25
+                │    ├── check constraint expressions
+                │    │    └── t.r:23 IN ('east', 'west') [outer=(23), constraints=(/23: [/'east' - /'east'] [/'west' - /'west']; tight)]
+                │    ├── computed column expressions
+                │    │    └── t.b:25
+                │    │         └── t.k:22 % 9
+                │    ├── key: (22)
+                │    └── fd: (22)-->(23-25), (24)~~>(22,23,25)
+                └── filters
+                     └── t.a:24 = 10 [outer=(24), constraints=(/24: [/10 - /10]; tight), fd=()-->(24)]

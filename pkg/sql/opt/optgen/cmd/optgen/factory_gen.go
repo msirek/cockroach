@@ -287,12 +287,24 @@ func (g *factoryGen) genReplace() {
 			firstFieldTyp := g.md.lookupType(string(itemDefine.Fields[0].Type))
 			g.w.writeIndent("before := list[i].%s\n", firstFieldName)
 			g.w.writeIndent("after := replace(before).(%s)\n", firstFieldTyp.name)
+			if itemDefine.Name == "UniqueChecksItem" {
+				// Ugly hack to handle UniqueChecksItem properly.
+				// Is there a better way to do this?
+				secondFieldName := g.md.fieldName(itemDefine.Fields[1])
+				secondFieldTyp := g.md.lookupType(string(itemDefine.Fields[1].Type))
+				g.w.writeIndent("before2 := list[i].%s\n", secondFieldName)
+				g.w.writeIndent("after2 := replace(before2).(%s)\n", secondFieldTyp.name)
+			}
 		} else {
 			// This is for cases like list of opt.ScalarExpr.
 			g.w.writeIndent("before := list[i]\n")
 			g.w.writeIndent("after := replace(before).(%s)\n", itemTyp.name)
 		}
-		g.w.nestIndent("if before != after {\n")
+		if itemDefine != nil && itemDefine.Name == "UniqueChecksItem" {
+			g.w.nestIndent("if before != after || before2 != after2 {\n")
+		} else {
+			g.w.nestIndent("if before != after {\n")
+		}
 		g.w.nestIndent("if newList == nil {\n")
 		g.w.writeIndent("newList = make([]%s, len(list))\n", itemTyp.name)
 		g.w.writeIndent("copy(newList, list[:i])\n")
@@ -304,12 +316,15 @@ func (g *factoryGen) genReplace() {
 				if i == 0 {
 					continue
 				}
-
-				// Use fieldLoadPrefix, since the field is a parameter to the
-				// Construct method.
-				fieldName := g.md.fieldName(field)
-				fieldTyp := g.md.typeOf(field)
-				g.w.write(", %slist[i].%s", fieldLoadPrefix(fieldTyp), fieldName)
+				if itemDefine.Name == "UniqueChecksItem" && i == 1 {
+					g.w.write(", after2")
+				} else {
+					// Use fieldLoadPrefix, since the field is a parameter to the
+					// Construct method.
+					fieldName := g.md.fieldName(field)
+					fieldTyp := g.md.typeOf(field)
+					g.w.write(", %slist[i].%s", fieldLoadPrefix(fieldTyp), fieldName)
+				}
 			}
 			g.w.write(")\n")
 		} else {
@@ -443,9 +458,21 @@ func (g *factoryGen) genCopyAndReplaceDefault() {
 			firstFieldType := g.md.lookupType(string(itemDefine.Fields[0].Type)).fullName
 			g.w.writeIndent("dst[i].%s = f.invokeReplace(src[i].%s, replace).(%s)\n",
 				firstFieldName, firstFieldName, firstFieldType)
+			if itemDefine.Name == "UniqueChecksItem" {
+				// Ugly hack.  How to do this another way?
+				secondFieldName := g.md.fieldName(itemDefine.Fields[1])
+				secondFieldType := g.md.lookupType(string(itemDefine.Fields[1].Type)).fullName
+				g.w.writeIndent("dst[i].%s = f.invokeReplace(src[i].%s, replace).(%s)\n",
+					secondFieldName, secondFieldName, secondFieldType)
+			}
 
 			// Now copy additional exported private fields.
-			for _, field := range expandFields(g.compiled, itemDefine)[1:] {
+			startIndex := 1
+			if itemDefine.Name == "UniqueChecksItem" {
+				// Do this differently.
+				startIndex = 2
+			}
+			for _, field := range expandFields(g.compiled, itemDefine)[startIndex:] {
 				if isExportedField(field) {
 					fieldName := g.md.fieldName(field)
 					g.w.writeIndent("dst[i].%s = src[i].%s\n", fieldName, fieldName)

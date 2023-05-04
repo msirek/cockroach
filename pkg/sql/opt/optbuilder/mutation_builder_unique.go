@@ -302,6 +302,89 @@ func (h *uniqueCheckHelper) init(mb *mutationBuilder, uniqueOrdinal int) bool {
 	return !fds.ColsAreLaxKey(uniqueCols)
 }
 
+// buildFiltersForFastPathCheck builds the filters for the current unique check.
+// The purpose of this is to find a Scan of an index which can consume all
+// filters (meaning it could also be safely executed via a KV lookup in a fast
+// path uniqueness check).
+func (h *uniqueCheckHelper) buildFiltersForFastPathCheck(
+	withScanScope *scope, scanExpr *memo.ScanExpr,
+) (scanFilters memo.FiltersExpr) {
+	f := h.mb.b.factory
+
+	scanFilters = make(memo.FiltersExpr, 0, h.uniqueOrdinals.Len())
+	possibleValues := h.mb.outScope.expr
+	// Skip to the WithScan or Values.
+	for skipProjectExpr, ok := possibleValues.(*memo.ProjectExpr); ok; skipProjectExpr, ok = possibleValues.(*memo.ProjectExpr) {
+		possibleValues = skipProjectExpr.Input
+	}
+
+	// If the source is a WithScan, we use InCols to find the matching value
+	// in the Values tuple. If the source is a Values expression, use the scope's
+	// column ID directly to find the desired tuple in the Values tuple.
+	withScanExpr, isWithScan := withScanScope.expr.(*memo.WithScanExpr)
+	withScanScopeValues, withScanScopeIsValues := withScanScope.expr.(*memo.ValuesExpr)
+	var valuesExpr *memo.ValuesExpr
+	isValues := false
+	if withScanScopeIsValues {
+		valuesExpr = withScanScopeValues
+		isValues = true
+	} else {
+		valuesExpr, isValues = possibleValues.(*memo.ValuesExpr)
+	}
+	// valuesExpr may be sourced from a values expression, or a values expression
+	// nested in a WithScanExpr. The value of variable `isWithScan` determines
+	// how to find the desired field in the valuesExpr below.
+	// This currently only supports single-row insert. It may be possible to
+	// support multi-row insert here by generating a tuple IN expression or an
+	// ORed predicate, eg. (col1 = 1 AND col2 = 2) OR (col1 = 3 AND col2 = 4)...
+	if isValues && len(valuesExpr.Rows) == 1 && valuesExpr.Rows[0].Op() == opt.TupleOp {
+		tupleExpr, _ := valuesExpr.Rows[0].(*memo.TupleExpr)
+		for i, ok := h.uniqueOrdinals.Next(0); ok; i, ok = h.uniqueOrdinals.Next(i + 1) {
+			withScanColID := opt.ColumnID(0)
+			if isWithScan {
+				// Sanity check the index is in bounds.
+				if i >= len(withScanExpr.InCols) {
+					scanFilters = scanFilters[:0]
+					break
+				}
+				withScanColID = withScanExpr.InCols[i]
+			} else {
+				withScanColID = withScanScope.cols[i].id
+			}
+			found := false
+			var tupleScalarExpression opt.ScalarExpr
+			for tupleIndex, valuesColID := range valuesExpr.Cols {
+				if valuesColID == withScanColID {
+					found = true
+					tupleScalarExpression = tupleExpr.Elems[tupleIndex]
+					break
+				}
+			}
+			// If we can't build any part of the filters, need to give up on fast
+			// path.
+			if !found {
+				scanFilters = scanFilters[:0]
+				break
+			}
+			if !scanExpr.Cols.Contains(h.scanScope.cols[i].id) {
+				// Trying to build a predicate on a column added in the projection
+				// on top of the scan. This may be from an expression index such as:
+				// `UNIQUE INDEX ((col1 + 10))`
+				// This is currently not supported.
+				scanFilters = scanFilters[:0]
+				break
+			}
+			scanFilters = append(scanFilters, f.ConstructFiltersItem(
+				f.ConstructEq(
+					f.ConstructVariable(h.scanScope.cols[i].id),
+					tupleScalarExpression,
+				),
+			))
+		}
+	}
+	return scanFilters
+}
+
 // buildInsertionCheck creates a unique check for rows which are added to a
 // table. The input to the insertion check will be produced from the input to
 // the mutation operator.
@@ -337,6 +420,18 @@ func (h *uniqueCheckHelper) buildInsertionCheck() memo.UniqueChecksItem {
 			),
 		))
 	}
+	// Find the ScanExpr which reads from the table this unique check applies to.
+	var uniqueFastPathCheck memo.RelExpr
+	possibleScan := h.scanScope.expr
+	if skipProjectExpr, ok := possibleScan.(*memo.ProjectExpr); ok {
+		possibleScan = skipProjectExpr.Input
+	}
+	scanExpr, foundScan := possibleScan.(*memo.ScanExpr)
+
+	var scanFilters memo.FiltersExpr
+	if foundScan {
+		scanFilters = h.buildFiltersForFastPathCheck(withScanScope, scanExpr)
+	}
 
 	// If the unique constraint is partial, we need to filter out inserted rows
 	// that don't satisfy the predicate. We also need to make sure that rows do
@@ -352,7 +447,25 @@ func (h *uniqueCheckHelper) buildInsertionCheck() memo.UniqueChecksItem {
 
 		typedPred = h.scanScope.resolveAndRequireType(pred, types.Bool)
 		scanPred := h.mb.b.buildScalar(typedPred, h.scanScope, nil, nil, nil)
-		semiJoinFilters = append(semiJoinFilters, f.ConstructFiltersItem(scanPred))
+		partialIndexFilter := f.ConstructFiltersItem(scanPred)
+		semiJoinFilters = append(semiJoinFilters, partialIndexFilter)
+		// If we couldn't build fast path scan filters already, or the columns in
+		// the partial index are not part of the scan (so couldn't be applied in the
+		// scan), give up on fast path, otherwise add the partial index predicate to
+		// the fast path scan filters. This is needed for cases such as:
+		//   `UNIQUE (a),`
+		//   `UNIQUE WITHOUT INDEX (a) WHERE k != 1,`
+		// Including the `k != 1` prevents the index on `a` from being used as a
+		// constrained scan to perform the check on the UNIQUE WITHOUT INDEX
+		// constraint. Likewise, if the UNIQUE index were itself a partial index,
+		// e.g.
+		//    `UNIQUE (a) WHERE k != 1,`
+		// then the matching `k != 1` term should allow that index to be used.
+		if len(scanFilters) != 0 && partialIndexFilter.ScalarProps().OuterCols.SubsetOf(scanExpr.Cols) {
+			scanFilters = append(scanFilters, f.ConstructFiltersItem(scanPred))
+		} else {
+			scanFilters = scanFilters[:0]
+		}
 	}
 
 	// We need to prevent rows from matching themselves in the semi join. We can
@@ -388,7 +501,22 @@ func (h *uniqueCheckHelper) buildInsertionCheck() memo.UniqueChecksItem {
 	// violation error.
 	project := f.ConstructProject(semiJoin, nil /* projections */, keyCols.ToSet())
 
-	return f.ConstructUniqueChecksItem(project, &memo.UniqueChecksItemPrivate{
+	// Build a SelectExpr which can be optimized in the explore phase and used
+	// to build information needed to perform the fast path uniqueness check.
+	// The goal is for the Select to be rewritten into a constrained scan on
+	// an index which applies all filters. If no such scans are found, insert
+	// fast path cannot be applied.
+	if foundScan && len(scanFilters) != 0 {
+		newScanPrivate := f.CustomFuncs().DuplicateScanPrivate(&scanExpr.ScanPrivate)
+		newScan := f.ConstructScan(newScanPrivate)
+		newFilters := f.CustomFuncs().RemapScanColsInFilter(scanFilters, &scanExpr.ScanPrivate, newScanPrivate)
+		uniqueFastPathCheck = f.ConstructSelect(newScan, newFilters)
+	} else {
+		// Things blow up if a RelExpr is nil, so construct a minimal dummy relation
+		// that will not be used.
+		uniqueFastPathCheck = f.CustomFuncs().ConstructEmptyValues(opt.ColSet{})
+	}
+	return f.ConstructUniqueChecksItem(project, uniqueFastPathCheck, &memo.UniqueChecksItemPrivate{
 		Table:        h.mb.tabID,
 		CheckOrdinal: h.uniqueOrdinal,
 		KeyCols:      keyCols,
