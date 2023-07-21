@@ -12,6 +12,7 @@ package memo
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"reflect"
 
@@ -3188,6 +3189,10 @@ func (sb *statisticsBuilder) applyFiltersItem(
 	s := relProps.Statistics()
 	scalarProps := filter.ScalarProps()
 	constrainedCols.UnionWith(scalarProps.OuterCols)
+	var origStats props.Statistics
+	origRowCount := s.RowCount
+	origSelectivity := s.Selectivity
+	origStats.CopyFrom(s)
 	if scalarProps.Constraints != nil {
 		histColsLocal := sb.applyConstraintSet(
 			scalarProps.Constraints, scalarProps.TightConstraints, e, relProps, s,
@@ -3202,22 +3207,42 @@ func (sb *statisticsBuilder) applyFiltersItem(
 				numUnappliedConjuncts++
 			}
 		}
-	} else if constraintUnion, numUnappliedDisjuncts := sb.buildDisjunctionConstraints(filter); len(constraintUnion) > 0 {
+		//s.Validate(constrainedCols) // msirek-temp
+	}
+	var constraintUnion []*constraint.Set
+	var numUnappliedDisjuncts int
+	var localHistCols opt.ColSet
+	if filter.Condition.Op() == opt.OrOp && (scalarProps.Constraints == nil ||
+		histCols.Empty() && !scalarProps.TightConstraints &&
+		sb.evalCtx.SessionData().OptimizerUseImprovedDisjunctionStats) {
+		constraintUnion, numUnappliedDisjuncts, localHistCols = sb.buildDisjunctionConstraints(filter, e, relProps)
+		fmt.Println(localHistCols)
+		//histCols.UnionWith(localHistCols)
+		constrainedCols = localHistCols
+		s.RowCount = origRowCount
+		s.Selectivity = origSelectivity
+	}
+	if len(constraintUnion) > 0 {
 		if sb.evalCtx.SessionData().OptimizerUseImprovedDisjunctionStats {
 			// The filters are one or more disjuncts and tight constraint sets
 			// could be built for at least one disjunct. numUnappliedDisjuncts
 			// contains the count of disjuncts which are not tight constraints.
 			var tmpStats props.Statistics
-
+			//s.CopyFrom(&origStats)
 			selectivities := make([]props.Selectivity, 0, len(constraintUnion)+numUnappliedDisjuncts)
 			// Get the stats for each constraint set, apply the selectivity to a
 			// temporary stats struct, and combine the disjunct selectivities.
 			// union the selectivity and row counts.
 			for i := 0; i < len(constraintUnion); i++ {
-				tmpStats.CopyFrom(s)
+				tmpStats.CopyFrom(&origStats)
 				sb.constrainExpr(e, constraintUnion[i], relProps, &tmpStats)
 				selectivities = append(selectivities, tmpStats.Selectivity)
 			}
+			//constrainedCols = opt.ColSet{}
+			//histCols = opt.ColSet{}
+			s.RowCount = origRowCount
+			s.Selectivity = origSelectivity
+			//s.Validate(constrainedCols) // msirek-temp
 			defaultSelectivity := props.MakeSelectivity(unknownFilterSelectivity)
 			for i := 0; i < numUnappliedDisjuncts; i++ {
 				selectivities = append(selectivities, defaultSelectivity)
@@ -3228,6 +3253,9 @@ func (sb *statisticsBuilder) applyFiltersItem(
 			disjunctionSelectivity := combineOredSelectivities(selectivities)
 			s.RowCount *= disjunctionSelectivity.AsFloat()
 			s.Selectivity.Multiply(disjunctionSelectivity)
+			if !scalarProps.TightConstraints && scalarProps.Constraints != nil {
+				numUnappliedConjuncts--
+			}
 		} else if numUnappliedDisjuncts == 0 {
 			// The filters are one or more disjunctions and tight constraint
 			// sets could be built for each.
@@ -3252,7 +3280,7 @@ func (sb *statisticsBuilder) applyFiltersItem(
 		} else {
 			numUnappliedConjuncts++
 		}
-	} else {
+	} else if scalarProps.Constraints == nil {
 		numUnappliedConjuncts++
 	}
 
@@ -3266,14 +3294,17 @@ func (sb *statisticsBuilder) applyFiltersItem(
 // unknownFilterSelectivity should be used for that disjunct.
 func (sb *statisticsBuilder) buildDisjunctionConstraints(
 	filter *FiltersItem,
-) (constraintSet []*constraint.Set, numUnappliedDisjuncts int) {
+	relExpr RelExpr,
+	relProps *props.Relational,
+) (constraintSet []*constraint.Set, numUnappliedDisjuncts int, histCols opt.ColSet) {
 	expr := filter.Condition
+	// s := relProps.Statistics()
 
 	// If the expression is not an Or, we cannot build disjunction constraint
 	// sets.
 	or, ok := expr.(*OrExpr)
 	if !ok {
-		return nil, 0
+		return nil, 0, histCols
 	}
 
 	cb := constraintsBuilder{md: sb.md, evalCtx: sb.evalCtx}
@@ -3285,6 +3316,10 @@ func (sb *statisticsBuilder) buildDisjunctionConstraints(
 		// tightness.
 		c, tight := cb.buildConstraints(e)
 		if !c.IsUnconstrained() && tight {
+			//localHistCols := sb.applyConstraintSet(
+			//	c, true /* tight */, relExpr, relProps, s,
+			//)
+			//histCols.UnionWith(localHistCols)  // msirek-temp
 			constraints = append(constraints, c)
 			return
 		}
@@ -3313,7 +3348,7 @@ func (sb *statisticsBuilder) buildDisjunctionConstraints(
 	collectConstraints(or.Left)
 	collectConstraints(or.Right)
 
-	return constraints, numUnappliedDisjuncts
+	return constraints, numUnappliedDisjuncts, histCols
 }
 
 // constrainExpr calculates the stats for a relational expression based on the

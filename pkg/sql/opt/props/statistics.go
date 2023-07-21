@@ -105,6 +105,11 @@ func (s *Statistics) CopyFrom(other *Statistics) {
 	s.Selectivity = other.Selectivity
 }
 
+// CopyFrom copies a Statistics object which can then be modified independently.
+func (s *Statistics) Validate(constrainedCols opt.ColSet) {
+	s.ColStats.Validate(constrainedCols)
+}
+
 // ApplySelectivity applies a given selectivity to the statistics. RowCount and
 // Selectivity are updated. Note that DistinctCounts, NullCounts, and
 // Histograms are not updated.

@@ -300,3 +300,14 @@ func (m *ColStatsMap) CopyFrom(other *ColStatsMap) {
 		}
 	}
 }
+
+// CopyFrom sets this map to a deep copy of another map, which can be modified
+// independently.
+func (m *ColStatsMap) Validate(constrainedCols opt.ColSet) {
+	for _, v := range m.initial {
+		if v.DistinctCount == 0 && !v.Cols.Empty() && v.Cols.SubsetOf(constrainedCols) {
+			panic("ouch")
+		}
+	}
+
+}

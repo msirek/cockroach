@@ -147,6 +147,15 @@ func (st statsTester) testStats(
 			return "", fmt.Errorf("could not find actual stat for columns %s", colNames)
 		}
 
+		dc := stat.DistinctCount()
+		if dc == 0 {
+			j := 0
+			j++  // msirek-temp
+		}
+		if st.qErr(float64(stat.DistinctCount()), actualStat.distinctCount) == 2.0 {
+			j := 0
+			j++  // msirek-temp
+		}
 		res = append(res,
 			colNames,
 			format(float64(stat.RowCount())),
