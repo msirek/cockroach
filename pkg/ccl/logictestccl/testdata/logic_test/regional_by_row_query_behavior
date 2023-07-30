@@ -1158,10 +1158,8 @@ SELECT * FROM [EXPLAIN INSERT INTO child VALUES (1, 1), (2, 2)] OFFSET 2
 │   └── • buffer
 │       │ label: buffer 1
 │       │
-│       └── • render
-│           │
-│           └── • values
-│                 size: 2 columns, 2 rows
+│       └── • values
+│             size: 4 columns, 2 rows
 │
 ├── • constraint-check
 │   │
