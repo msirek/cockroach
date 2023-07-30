@@ -22,7 +22,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/constraint"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/exec"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/memo"
-	"github.com/cockroachdb/cockroach/pkg/sql/opt/props"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
 	"github.com/cockroachdb/cockroach/pkg/sql/row"
@@ -484,26 +483,6 @@ func (b *Builder) tryBuildFastPathInsert(ins *memo.InsertExpr) (_ execPlan, ok b
 	}
 
 	insInput := ins.Input
-	var projectExpr *memo.ProjectExpr
-	// Allow fast-path to merge the projection with the Values expression if all
-	// input columns are passed through and no projections reference columns.
-	// Likely expressions are constants or gen_random_uuid function calls.
-	if projectExpr, ok = insInput.(*memo.ProjectExpr); ok {
-		insInput = projectExpr.Input
-		if _, ok = insInput.(*memo.ValuesExpr); !ok {
-			return execPlan{}, false, nil
-		}
-		if !projectExpr.Passthrough.Equals(insInput.Relational().OutputCols) {
-			return execPlan{}, false, nil
-		}
-		for i := 0; i < len(projectExpr.Projections); i++ {
-			var sharedProps props.Shared
-			memo.BuildSharedProps(projectExpr.Projections[i].Element, &sharedProps, b.evalCtx)
-			if !sharedProps.OuterCols.Empty() {
-				return execPlan{}, false, nil
-			}
-		}
-	}
 
 	//  - the input is Values with at most mutations.MaxBatchSize, and there are no
 	//    subqueries;
@@ -524,173 +503,29 @@ func (b *Builder) tryBuildFastPathInsert(ins *memo.InsertExpr) (_ execPlan, ok b
 	uniqChecks := make([]exec.InsertFastPathFKUniqCheck, len(ins.UniqueChecks))
 	for i := range ins.UniqueChecks {
 		c := &ins.UniqueChecks[i]
-		check := c.Check
-
-		out := &uniqChecks[i]
-		out.MatchMethod = tree.MatchFull
-
-		// Skip over distribute and projection operations.
-		if distributeExpr, isDistribute := check.(*memo.DistributeExpr); isDistribute {
-			check = distributeExpr.Input
-		}
-		var skipProjectExpr *memo.ProjectExpr
-		for skipProjectExpr, ok = check.(*memo.ProjectExpr); ok; skipProjectExpr, ok = check.(*memo.ProjectExpr) {
-			check = skipProjectExpr.Input
-		}
-		if b.handleSingleRowInsert(ins, check, out, c) {
-			continue
-		}
-		lookupJoin, isLookupJoin := check.(*memo.LookupJoinExpr)
-		if !isLookupJoin {
-			// Not a lookup join.
-			return execPlan{}, false, nil
-		}
-		out.ReferencedTable = md.Table(lookupJoin.Table)
-		out.ReferencedIndex = out.ReferencedTable.Index(lookupJoin.Index)
-
-		inputExpr := lookupJoin.Input
-		// Allow a select if it has ignorable filters (checking done after withScan
-		// is resolved).
-		var selectCondition opt.ScalarExpr
-		if sel, isSelect := inputExpr.(*memo.SelectExpr); isSelect {
-			inputExpr = sel.Input
-			if len(sel.Filters) > 1 {
-				return execPlan{}, false, nil
-			} else if len(sel.Filters) == 1 {
-				selectCondition = sel.Filters[0].Condition
-			}
-		}
-		// A WithScan typically wraps multiple rows from a VALUES clause being
-		// inserted, so peek into it.
-		withScan, isWithScan := inputExpr.(*memo.WithScanExpr)
-		// Verify this is the WithScan corresponding to this insert.
-		if !isWithScan || withScan.With != ins.WithID {
+		if c.FastPathCheck == nil {
 			return execPlan{}, false, nil
 		}
 
-		// Ignore a select with an ignorable condition.
-		if selectCondition != nil && !b.ignorableNECheck(selectCondition, withScan, lookupJoin.Table) {
-			return execPlan{}, false, nil
-		}
-
-		// A uniqueness check may be handled via a lookup join into the index.
-		// We could have a lookup expression or lookup KeyCols.
-		if len(lookupJoin.LookupExpr) == 0 {
-			out.InsertCols = make([]exec.TableColumnOrdinal, len(lookupJoin.KeyCols))
-			// Make a single DatumsFromConstraint row as there will be one uniqueness
-			// KV lookup per input row.
-			out.DatumsFromConstraint = make([]tree.Datums, 1)
-			out.DatumsFromConstraint[0] = make(tree.Datums, tab.ColumnCount())
-			// For each index key column...
-			for i, keyCol := range lookupJoin.KeyCols {
-				// The keyCol comes from the WithScan operator. We must find the
-				// matching column in the mutation input.
-				var withColOrd int
-				withColOrd, ok = withScan.OutCols.Find(keyCol)
-				if !ok {
-					return execPlan{}, false, errors.AssertionFailedf("cannot find column %d", keyCol)
-				}
-				// Get the column ID of the matching input column.
-				inputCol := withScan.InCols[withColOrd]
-				var inputColOrd int
-				// Find the position of that column in the input row.
-				inputColOrd, ok = ins.InsertCols.Find(inputCol)
-				if !ok {
-					return execPlan{}, false, errors.AssertionFailedf("cannot find column %d", inputCol)
-				}
-				out.InsertCols[i] = exec.TableColumnOrdinal(inputColOrd)
-			}
-			out.MkErr = func(values tree.Datums) error {
-				return mkFastPathUniqueCheckErr(md, c, values, out.ReferencedIndex)
-			}
-		} else {
-			if len(lookupJoin.KeyCols) > 0 {
-				return execPlan{}, false, nil
-			}
-			InExprSeen := false
-			// There is one insert column associated with each lookup expression.
-			out.InsertCols = make([]exec.TableColumnOrdinal, len(lookupJoin.LookupExpr))
-			for _, joinFilter := range lookupJoin.LookupExpr {
-				var eqExpr *memo.EqExpr
-				var leftVariableExpr *memo.VariableExpr
-				var tupleExpr *memo.TupleExpr
-				var InExpr *memo.InExpr
-				var keyCol opt.ColumnID
-				// Populate InsertCols and DatumsFromConstraint using the join filter
-				// condition.
-				if InExpr, ok = joinFilter.Condition.(*memo.InExpr); ok {
-					if InExprSeen {
-						return execPlan{}, false, nil
-					}
-					InExprSeen = true
-					if leftVariableExpr, ok = InExpr.Left.(*memo.VariableExpr); !ok {
-						return execPlan{}, false, nil
-					}
-					keyCol = leftVariableExpr.Col
-					if tupleExpr, ok = InExpr.Right.(*memo.TupleExpr); !ok {
-						return execPlan{}, false, nil
-					}
-					inputColOrd, indexColOrd, foundKeyColOrd := b.findKeyColOrd(keyCol, lookupJoin.Table, lookupJoin.Index)
-					if !foundKeyColOrd {
-						return execPlan{}, false, nil
-					}
-					// Verify the lookup expressions are on a prefix of the index key.
-					if indexColOrd >= len(lookupJoin.LookupExpr) {
-						return execPlan{}, false, nil
-					}
-					out.InsertCols[indexColOrd] = exec.TableColumnOrdinal(inputColOrd)
-					// The datums are fixed for all columns in the IN expressions, so
-					// add them to DatumsFromConstraint.
-					out.DatumsFromConstraint = make([]tree.Datums, len(tupleExpr.Elems))
-					for k, tuple := range tupleExpr.Elems {
-						var constExpr *memo.ConstExpr
-						if constExpr, ok = tuple.(*memo.ConstExpr); !ok {
-							return execPlan{}, false, nil
-						}
-						out.DatumsFromConstraint[k] = make(tree.Datums, tab.ColumnCount())
-						out.DatumsFromConstraint[k][inputColOrd] = constExpr.Value
-					}
-				} else if eqExpr, ok = joinFilter.Condition.(*memo.EqExpr); ok {
-					// For equality, the key column is on the right, as opposed to on the
-					// left for IN expressions, as we are equating a left table column and
-					// right table column.
-					if rightVariableExpr, rightIsVariable := eqExpr.Right.(*memo.VariableExpr); rightIsVariable {
-						keyCol = rightVariableExpr.Col
-					}
-					if _, leftIsVariable := eqExpr.Left.(*memo.VariableExpr); !leftIsVariable {
-						return execPlan{}, false, nil
-					}
-					inputColOrd, indexColOrd, foundKeyColOrd := b.findKeyColOrd(keyCol, lookupJoin.Table, lookupJoin.Index)
-					if !foundKeyColOrd {
-						return execPlan{}, false, nil
-					}
-					// Verify the lookup expressions are on a prefix of the index key.
-					if indexColOrd >= len(lookupJoin.LookupExpr) {
-						return execPlan{}, false, nil
-					}
-					out.InsertCols[indexColOrd] = exec.TableColumnOrdinal(inputColOrd)
-				} else {
-					return execPlan{}, false, nil
-				}
-			}
-			out.MkErr = func(values tree.Datums) error {
-				return mkFastPathUniqueCheckErr(md, c, values, out.ReferencedIndex)
-			}
-		}
-
-		for _, onFilter := range lookupJoin.On {
-			if !b.ignorableNECheck(onFilter.Condition, withScan, lookupJoin.Table) {
-				return execPlan{}, false, nil
-			}
-		}
-
-		if len(out.DatumsFromConstraint) == 0 {
+		if len(c.FastPathCheck.DatumsFromConstraint) == 0 {
 			// We need at least one DatumsFromConstraint in order to perform
 			// uniqueness checks during fast-path insert. Even if DatumsFromConstraint
 			// contains no Datums, that case indicates that all values to check come
 			// from the input row.
 			return execPlan{}, false, nil
 		}
+		execFastPathCheck := &uniqChecks[i]
+		// Copy the elements built during exploration into the execbuilder
+		// structures.
+		execFastPathCheck.ReferencedTable = c.FastPathCheck.ReferencedTable
+		execFastPathCheck.ReferencedIndex = c.FastPathCheck.ReferencedIndex
+		execFastPathCheck.InsertCols = make([]exec.TableColumnOrdinal, len(c.FastPathCheck.InsertCols))
+		for j, insertCol := range c.FastPathCheck.InsertCols {
+			execFastPathCheck.InsertCols[j] = exec.TableColumnOrdinal(insertCol)
+		}
+		execFastPathCheck.MatchMethod = c.FastPathCheck.MatchMethod
+		execFastPathCheck.DatumsFromConstraint = c.FastPathCheck.DatumsFromConstraint
+		execFastPathCheck.MkErr = exec.MkErrFn(c.FastPathCheck.MkErr)
 	}
 
 	//  - there are no self-referencing foreign keys;
@@ -769,15 +604,6 @@ func (b *Builder) tryBuildFastPathInsert(ins *memo.InsertExpr) (_ execPlan, ok b
 				}
 			}
 			return mkFKCheckErr(md, c, fkVals)
-		}
-	}
-
-	if projectExpr != nil {
-		// Merge the projection with the Values expression.
-		expr := b.optimizer.Factory().CustomFuncs().
-			MergeProjectWithValues(projectExpr.Projections, projectExpr.Passthrough, values)
-		if values, ok = expr.(*memo.ValuesExpr); !ok {
-			return execPlan{}, false, nil
 		}
 	}
 

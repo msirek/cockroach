@@ -1,0 +1,26 @@
+# =============================================================================
+# insert.opt contains exploration rules for the Insert operator.
+# =============================================================================
+
+# InsertFastPath checks if an insert statement may qualify for executing
+# fast path uniqueness checks, and if so, builds new uniqueness checks in
+# $newUnique, which the execbuilder uses to build the actual insert fast path
+# statement. $insInput is the input to the new insert statement, which may
+# have been rewritten to merge a projection with the Values expression.
+[InsertFastPath, Explore]
+(Insert
+    *
+    $unique:* &
+        (Let
+            (
+                $newUnique
+                $insInput
+                $ok
+            ):(CanUseUniqueChecksForInsertFastPath (Root) $unique)
+            $ok
+        )
+    $fk:*
+    $mutations: *
+)
+=>
+(Insert $insInput $newUnique $fk $mutations)
