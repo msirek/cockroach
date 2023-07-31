@@ -16,13 +16,10 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/colinfo"
 	"github.com/cockroachdb/cockroach/pkg/sql/lexbase"
-	"github.com/cockroachdb/cockroach/pkg/sql/mutations"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/cat"
-	"github.com/cockroachdb/cockroach/pkg/sql/opt/constraint"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/exec"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/memo"
-	"github.com/cockroachdb/cockroach/pkg/sql/opt/props"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
 	"github.com/cockroachdb/cockroach/pkg/sql/row"
@@ -132,343 +129,6 @@ func (b *Builder) buildInsert(ins *memo.InsertExpr) (execPlan, error) {
 	return ep, nil
 }
 
-// findKeyColOrd examines a lookupJoin.Table for the given `keyCol` and returns
-// the ordinal position of that key column from the table metadata and the
-// ordinal position of that key column in the key definition from the index
-// metadata.
-func (b *Builder) findKeyColOrd(
-	keyCol opt.ColumnID, tableID opt.TableID, indexOrd cat.IndexOrdinal,
-) (tableColOrd int, indexColOrd int, ok bool) {
-	md := b.mem.Metadata()
-	table := md.Table(tableID)
-	tableMeta := md.TableMeta(tableID)
-	idx := table.Index(indexOrd)
-	for indexColOrd = 0; indexColOrd < idx.KeyColumnCount(); indexColOrd++ {
-		col := idx.Column(indexColOrd)
-		ord := col.Ordinal()
-		colID := tableMeta.MetaID.ColumnID(ord)
-		if colID == keyCol {
-			return ord, indexColOrd, true
-		}
-	}
-	return 0, 0, false
-}
-
-// ignorableNECheck checks that any predicate expressions are only of the
-// form: withScan_col1 <> lookup_table_index_col1 OR withScan_col2 <>
-// lookup_table_index_col2 OR ... This condition is generated in
-// `buildInsertionCheck` to make sure in the non-fast path flow, that insert
-// rows don't match themselves in the join. This is because the uniqueness
-// check happens after the insertion in the non-fast path flow. In the fast
-// path flow the uniqueness check happens before the insert, so this
-// identical row check is only there to prevent a false positive duplicate
-// unique value errors and doesn't need to be examined for fast path
-// processing.
-func (b *Builder) ignorableNECheck(
-	expr opt.ScalarExpr, withScan *memo.WithScanExpr, tableID opt.TableID,
-) (ok bool) {
-	switch t := expr.(type) {
-	case *memo.OrExpr:
-		return b.ignorableNECheck(t.Left, withScan, tableID) && b.ignorableNECheck(t.Right, withScan, tableID)
-	case *memo.NeExpr:
-		if t.Left.Op() != opt.VariableOp || t.Right.Op() != opt.VariableOp {
-			return false
-		}
-		// The WithScan column is built on the left.
-		leftVariable := t.Left.(*memo.VariableExpr)
-		_, ok = withScan.OutCols.Find(leftVariable.Col)
-		if !ok {
-			return false
-		}
-		// Verify the right column is a primary key column (index ordinal 0).
-		rightVariable := t.Right.(*memo.VariableExpr)
-		_, _, ok = b.findKeyColOrd(rightVariable.Col, tableID, 0 /* primary index */)
-		if !ok {
-			return false
-		}
-		return true
-	default:
-		return false
-	}
-}
-
-// ignorablePKNEConstCheck checks that any predicate expressions are only of the
-// form: PK_col1 <> const1 OR PK_col2 <> const2 OR ... This condition is
-// generated for single-row inserts to make sure in the non-fast path flow, that
-// insert rows don't match themselves in the join. This is because the
-// uniqueness check happens after the insertion in the non-fast path flow. In
-// the fast path flow the uniqueness check happens before the insert, so this
-// identical row check is only there to prevent a false positive duplicate
-// unique value errors and doesn't need to be examined for fast path processing.
-// The constants in the predicates are compared with the matching constant
-// in the insert tuple for raw equality to verify that the constant was derived
-// from the insert row.
-func (b *Builder) ignorablePKNEConstCheck(
-	expr opt.ScalarExpr, insertTuple *memo.TupleExpr, tableID opt.TableID,
-) (ok bool) {
-	switch t := expr.(type) {
-	case *memo.OrExpr:
-		return b.ignorablePKNEConstCheck(t.Left, insertTuple, tableID) && b.ignorablePKNEConstCheck(t.Right, insertTuple, tableID)
-	case *memo.NeExpr:
-		if t.Left.Op() != opt.VariableOp || t.Right.Op() != opt.ConstOp {
-			return false
-		}
-		constFromPredicate := t.Right.(*memo.ConstExpr)
-
-		// Verify the left column is a primary key column (index ordinal 0).
-		leftVariable := t.Left.(*memo.VariableExpr)
-		ord, _, ok := b.findKeyColOrd(leftVariable.Col, tableID, 0 /* primary index */)
-		if !ok {
-			return false
-		}
-		if ord >= len(insertTuple.Elems) {
-			return false
-		}
-		constExprFromInsertRow, ok := insertTuple.Elems[ord].(*memo.ConstExpr)
-		if !ok {
-			return false
-		}
-		if constExprFromInsertRow != constFromPredicate {
-			return false
-		}
-		return true
-	default:
-		return false
-	}
-}
-
-// handleSingleRowInsert examines a duplicate check involving cross join of the
-// insert row with a scan or select from the base table in fulfillment of the
-// unique constraint built for UniqueChecksItem `c`, and builds the
-// corresponding `out` parameter of type InsertFastPathFKUniqCheck which is used
-// to drive insert fast path unique constraint checks in the execution engine.
-// `check` is the tree of operations from `c` with distribute and projection
-// operations skipped over. For locality-optimized search cases, multiple
-// partial keys may be built in out.DatumsFromConstraint.
-func (b *Builder) handleSingleRowInsert(
-	ins *memo.InsertExpr,
-	check memo.RelExpr,
-	out *exec.InsertFastPathFKUniqCheck,
-	c *memo.UniqueChecksItem,
-) (ok bool) {
-	md := b.mem.Metadata()
-	tab := md.Table(ins.Table)
-
-	insertValues, insertInputIsValues := ins.Input.(*memo.ValuesExpr)
-	if !insertInputIsValues {
-		return false
-	}
-	if len(insertValues.Rows) != 1 {
-		return false
-	}
-	insertTuple, valueRowIsTuple := insertValues.Rows[0].(*memo.TupleExpr)
-	if !valueRowIsTuple {
-		return false
-	}
-
-	var inputExpr, rightExpr memo.RelExpr
-	var onClause memo.FiltersExpr
-
-	innerJoin, isInnerJoin := check.(*memo.InnerJoinExpr)
-	if isInnerJoin {
-		inputExpr = innerJoin.Left
-		rightExpr = innerJoin.Right
-		onClause = innerJoin.On
-	} else {
-		// Not an inner join.
-		semiJoin, isSemiJoin := check.(*memo.SemiJoinExpr)
-		if !isSemiJoin {
-			return false
-		}
-		inputExpr = semiJoin.Left
-		rightExpr = semiJoin.Right
-		onClause = semiJoin.On
-	}
-	// We're expecting a cross product of the row(s) to insert joined with the
-	// rows to check for uniqueness.
-	if len(onClause) > 0 {
-		return false
-	}
-	// Skip over the select (check if it's ignorable below).
-	var sel *memo.SelectExpr
-	var isSelect bool
-	if sel, isSelect = inputExpr.(*memo.SelectExpr); isSelect {
-		inputExpr = sel.Input
-	}
-	_, isValues := inputExpr.(*memo.ValuesExpr)
-	if !isValues {
-		return false
-	}
-	selectFilterIsOK := func(selectExpr *memo.SelectExpr, scanExpr *memo.ScanExpr) bool {
-		if len(selectExpr.Filters) != 1 {
-			return false
-		}
-		// Allow a select if it has an ignorable filter condition.
-		if !b.ignorablePKNEConstCheck(selectExpr.Filters[0].Condition, insertTuple, scanExpr.Table) {
-			return false
-		}
-		return true
-	}
-	if isSelect {
-		if scan, isScan := inputExpr.(*memo.ScanExpr); isScan {
-			if !selectFilterIsOK(sel, scan) {
-				return false
-			}
-		} else {
-			return false
-		}
-	}
-
-	if indexJoinExpr, isIndexJoin := rightExpr.(*memo.IndexJoinExpr); isIndexJoin {
-		rightExpr = indexJoinExpr.Input
-	}
-	// A locality-optimized search may be wrapped in a LIMIT expression.
-	if limitExpr, isLimit := rightExpr.(*memo.LimitExpr); isLimit {
-		rightExpr = limitExpr.Input
-	}
-	var selectExpr *memo.SelectExpr
-	// Save the select expression for later analysis.
-	if selectExpr, ok = rightExpr.(*memo.SelectExpr); ok {
-		rightExpr = selectExpr.Input
-	}
-	var scanExpr *memo.ScanExpr
-
-	if localityOptimizedSearch, isLOS := rightExpr.(*memo.LocalityOptimizedSearchExpr); isLOS {
-		// Locality-optimized search can be expanded into multiple KV requests per
-		// input row.
-		var localScan, remoteScan *memo.ScanExpr
-		if localScan, ok = localityOptimizedSearch.Local.(*memo.ScanExpr); !ok {
-			return false
-		}
-		if localScan.Constraint == nil {
-			return false
-		}
-		if remoteScan, ok = localityOptimizedSearch.Remote.(*memo.ScanExpr); !ok {
-			return false
-		}
-		if remoteScan.Constraint == nil {
-			return false
-		}
-		if selectExpr != nil {
-			// Get the table ID of the original scan, which has PK information.
-			if scanExpr, ok = localityOptimizedSearch.FirstExpr().(*memo.ScanExpr); !ok {
-				return false
-			}
-			// Allow a select if it has an ignorable filter condition.
-			if !selectFilterIsOK(selectExpr, scanExpr) {
-				return false
-			}
-		}
-		out.ReferencedTable = md.Table(localScan.Table)
-		out.ReferencedIndex = out.ReferencedTable.Index(localScan.Index)
-
-		// Set up InsertCols with the index key columns.
-		numKeyCols := localScan.Constraint.Spans.Get(0).StartKey().Length()
-		out.InsertCols = make([]exec.TableColumnOrdinal, numKeyCols)
-		for j := 0; j < numKeyCols; j++ {
-			ord := out.ReferencedIndex.Column(j).Ordinal()
-			out.InsertCols[j] = exec.TableColumnOrdinal(ord)
-		}
-		// populateDatumsFromConstraint builds the partial key in
-		// DatumsFromConstraint from a set of spans.
-		populateDatumsFromConstraint := func(spans constraint.Spans, idxOffset int) bool {
-			// Build the partial key for the spans.
-			for j := 0; j < spans.Count(); j++ {
-				// Find the index into DatumsFromConstraint to use.
-				rowNum := j + idxOffset
-				// The number of KV requests will match the number of spans.
-				// DatumsFromConstraint is indexed by table column ordinal, so build
-				// a slice which is large enough for any column.
-				out.DatumsFromConstraint[rowNum] = make(tree.Datums, tab.ColumnCount())
-				span := spans.Get(j)
-				// Verify the there is a single key...
-				if span.Prefix(localScan.Memo().EvalContext()) != span.StartKey().Length() {
-					return false
-				}
-				// ... and that the span has the same number of columns as the index key.
-				if span.StartKey().Length() != numKeyCols {
-					return false
-				}
-				for k := 0; k < span.StartKey().Length(); k++ {
-					// Get the key column's table column ordinal.
-					ord := out.InsertCols[k]
-					// Populate DatumsFromConstraint with that key column value.
-					out.DatumsFromConstraint[rowNum][ord] = span.StartKey().Value(k)
-				}
-			}
-			return true
-		}
-
-		// The number of KV requests will match the number of spans.
-		out.DatumsFromConstraint = make([]tree.Datums,
-			localScan.Constraint.Spans.Count()+remoteScan.Constraint.Spans.Count())
-
-		// Build the partial key for the local span(s).
-		if !populateDatumsFromConstraint(localScan.Constraint.Spans, 0) {
-			return false
-		}
-		// Build the partial key for the remote spans.
-		if !populateDatumsFromConstraint(remoteScan.Constraint.Spans, localScan.Constraint.Spans.Count()) {
-			return false
-		}
-
-		out.MkErr = func(values tree.Datums) error {
-			return mkFastPathUniqueCheckErr(md, c, values, out.ReferencedIndex)
-		}
-	} else {
-		// Regular scan will use one KV request per input row.
-		if scanExpr, ok = rightExpr.(*memo.ScanExpr); !ok {
-			return false
-		}
-		if scanExpr.Constraint == nil {
-			return false
-		}
-		if selectExpr != nil {
-			// Allow a select if it has an ignorable filter condition.
-			if !selectFilterIsOK(selectExpr, scanExpr) {
-				return false
-			}
-		}
-		out.ReferencedTable = md.Table(scanExpr.Table)
-		out.ReferencedIndex = out.ReferencedTable.Index(scanExpr.Index)
-
-		// Set up InsertCols with the index key columns.
-		numKeyCols := scanExpr.Constraint.Spans.Get(0).StartKey().Length()
-		out.InsertCols = make([]exec.TableColumnOrdinal, numKeyCols)
-		for j := 0; j < numKeyCols; j++ {
-			ord := out.ReferencedIndex.Column(j).Ordinal()
-			out.InsertCols[j] = exec.TableColumnOrdinal(ord)
-		}
-		// The number of KV requests will match the number of spans.
-		out.DatumsFromConstraint = make([]tree.Datums, scanExpr.Constraint.Spans.Count())
-		for j := 0; j < scanExpr.Constraint.Spans.Count(); j++ {
-			// DatumsFromConstraint is indexed by table column ordinal, so build
-			// a slice which is large enough for any column.
-			out.DatumsFromConstraint[j] = make(tree.Datums, tab.ColumnCount())
-			span := scanExpr.Constraint.Spans.Get(j)
-			// Verify the there is a single key...
-			if span.Prefix(scanExpr.Memo().EvalContext()) != span.StartKey().Length() {
-				return false
-			}
-			// ... and that the span has the same number of columns as the index key.
-			if span.StartKey().Length() != numKeyCols {
-				return false
-			}
-			for k := 0; k < span.StartKey().Length(); k++ {
-				// Get the key column's table column ordinal.
-				ord := out.InsertCols[k]
-				// Populate DatumsFromConstraint with that key column value.
-				out.DatumsFromConstraint[j][ord] = span.StartKey().Value(k)
-			}
-		}
-		out.MkErr = func(values tree.Datums) error {
-			return mkFastPathUniqueCheckErr(md, c, values, out.ReferencedIndex)
-		}
-	}
-	// We must build at least one DatumsFromConstraint entry to claim success.
-	return len(out.DatumsFromConstraint) != 0
-}
-
 // tryBuildFastPathInsert attempts to construct an insert using the fast path,
 // checking all required conditions. See exec.Factory.ConstructInsertFastPath.
 func (b *Builder) tryBuildFastPathInsert(ins *memo.InsertExpr) (_ execPlan, ok bool, _ error) {
@@ -484,37 +144,10 @@ func (b *Builder) tryBuildFastPathInsert(ins *memo.InsertExpr) (_ execPlan, ok b
 	}
 
 	insInput := ins.Input
-	var projectExpr *memo.ProjectExpr
-	// Allow fast-path to merge the projection with the Values expression if all
-	// input columns are passed through and no projections reference columns.
-	// Likely expressions are constants or gen_random_uuid function calls.
-	if projectExpr, ok = insInput.(*memo.ProjectExpr); ok {
-		insInput = projectExpr.Input
-		if _, ok = insInput.(*memo.ValuesExpr); !ok {
-			return execPlan{}, false, nil
-		}
-		if !projectExpr.Passthrough.Equals(insInput.Relational().OutputCols) {
-			return execPlan{}, false, nil
-		}
-		for i := 0; i < len(projectExpr.Projections); i++ {
-			var sharedProps props.Shared
-			memo.BuildSharedProps(projectExpr.Projections[i].Element, &sharedProps, b.evalCtx)
-			if !sharedProps.OuterCols.Empty() {
-				return execPlan{}, false, nil
-			}
-		}
-	}
-
-	//  - the input is Values with at most mutations.MaxBatchSize, and there are no
-	//    subqueries;
-	//    (note that mutations.MaxBatchSize() is a quantity of keys in the batch
-	//     that we send, not a number of rows. We use this as a guideline only,
-	//     and there is no guarantee that we won't produce a bigger batch.)
 	values, ok := insInput.(*memo.ValuesExpr)
-	if !ok ||
-		values.ChildCount() > mutations.MaxBatchSize(false /* forceProductionMaxBatchSize */) ||
-		values.Relational().HasSubquery ||
-		values.Relational().HasUDF {
+	// Values expressions containing subqueries or UDFs, or having a size larger
+	// than the max mutation batch size are disallowed.
+	if !ok || !memo.ValuesLegalForInsertFastPath(values) {
 		return execPlan{}, false, nil
 	}
 
@@ -524,173 +157,29 @@ func (b *Builder) tryBuildFastPathInsert(ins *memo.InsertExpr) (_ execPlan, ok b
 	uniqChecks := make([]exec.InsertFastPathFKUniqCheck, len(ins.UniqueChecks))
 	for i := range ins.UniqueChecks {
 		c := &ins.UniqueChecks[i]
-		check := c.Check
-
-		out := &uniqChecks[i]
-		out.MatchMethod = tree.MatchFull
-
-		// Skip over distribute and projection operations.
-		if distributeExpr, isDistribute := check.(*memo.DistributeExpr); isDistribute {
-			check = distributeExpr.Input
-		}
-		var skipProjectExpr *memo.ProjectExpr
-		for skipProjectExpr, ok = check.(*memo.ProjectExpr); ok; skipProjectExpr, ok = check.(*memo.ProjectExpr) {
-			check = skipProjectExpr.Input
-		}
-		if b.handleSingleRowInsert(ins, check, out, c) {
-			continue
-		}
-		lookupJoin, isLookupJoin := check.(*memo.LookupJoinExpr)
-		if !isLookupJoin {
-			// Not a lookup join.
-			return execPlan{}, false, nil
-		}
-		out.ReferencedTable = md.Table(lookupJoin.Table)
-		out.ReferencedIndex = out.ReferencedTable.Index(lookupJoin.Index)
-
-		inputExpr := lookupJoin.Input
-		// Allow a select if it has ignorable filters (checking done after withScan
-		// is resolved).
-		var selectCondition opt.ScalarExpr
-		if sel, isSelect := inputExpr.(*memo.SelectExpr); isSelect {
-			inputExpr = sel.Input
-			if len(sel.Filters) > 1 {
-				return execPlan{}, false, nil
-			} else if len(sel.Filters) == 1 {
-				selectCondition = sel.Filters[0].Condition
-			}
-		}
-		// A WithScan typically wraps multiple rows from a VALUES clause being
-		// inserted, so peek into it.
-		withScan, isWithScan := inputExpr.(*memo.WithScanExpr)
-		// Verify this is the WithScan corresponding to this insert.
-		if !isWithScan || withScan.With != ins.WithID {
+		if c.FastPathCheck == nil {
 			return execPlan{}, false, nil
 		}
 
-		// Ignore a select with an ignorable condition.
-		if selectCondition != nil && !b.ignorableNECheck(selectCondition, withScan, lookupJoin.Table) {
-			return execPlan{}, false, nil
-		}
-
-		// A uniqueness check may be handled via a lookup join into the index.
-		// We could have a lookup expression or lookup KeyCols.
-		if len(lookupJoin.LookupExpr) == 0 {
-			out.InsertCols = make([]exec.TableColumnOrdinal, len(lookupJoin.KeyCols))
-			// Make a single DatumsFromConstraint row as there will be one uniqueness
-			// KV lookup per input row.
-			out.DatumsFromConstraint = make([]tree.Datums, 1)
-			out.DatumsFromConstraint[0] = make(tree.Datums, tab.ColumnCount())
-			// For each index key column...
-			for i, keyCol := range lookupJoin.KeyCols {
-				// The keyCol comes from the WithScan operator. We must find the
-				// matching column in the mutation input.
-				var withColOrd int
-				withColOrd, ok = withScan.OutCols.Find(keyCol)
-				if !ok {
-					return execPlan{}, false, errors.AssertionFailedf("cannot find column %d", keyCol)
-				}
-				// Get the column ID of the matching input column.
-				inputCol := withScan.InCols[withColOrd]
-				var inputColOrd int
-				// Find the position of that column in the input row.
-				inputColOrd, ok = ins.InsertCols.Find(inputCol)
-				if !ok {
-					return execPlan{}, false, errors.AssertionFailedf("cannot find column %d", inputCol)
-				}
-				out.InsertCols[i] = exec.TableColumnOrdinal(inputColOrd)
-			}
-			out.MkErr = func(values tree.Datums) error {
-				return mkFastPathUniqueCheckErr(md, c, values, out.ReferencedIndex)
-			}
-		} else {
-			if len(lookupJoin.KeyCols) > 0 {
-				return execPlan{}, false, nil
-			}
-			InExprSeen := false
-			// There is one insert column associated with each lookup expression.
-			out.InsertCols = make([]exec.TableColumnOrdinal, len(lookupJoin.LookupExpr))
-			for _, joinFilter := range lookupJoin.LookupExpr {
-				var eqExpr *memo.EqExpr
-				var leftVariableExpr *memo.VariableExpr
-				var tupleExpr *memo.TupleExpr
-				var InExpr *memo.InExpr
-				var keyCol opt.ColumnID
-				// Populate InsertCols and DatumsFromConstraint using the join filter
-				// condition.
-				if InExpr, ok = joinFilter.Condition.(*memo.InExpr); ok {
-					if InExprSeen {
-						return execPlan{}, false, nil
-					}
-					InExprSeen = true
-					if leftVariableExpr, ok = InExpr.Left.(*memo.VariableExpr); !ok {
-						return execPlan{}, false, nil
-					}
-					keyCol = leftVariableExpr.Col
-					if tupleExpr, ok = InExpr.Right.(*memo.TupleExpr); !ok {
-						return execPlan{}, false, nil
-					}
-					inputColOrd, indexColOrd, foundKeyColOrd := b.findKeyColOrd(keyCol, lookupJoin.Table, lookupJoin.Index)
-					if !foundKeyColOrd {
-						return execPlan{}, false, nil
-					}
-					// Verify the lookup expressions are on a prefix of the index key.
-					if indexColOrd >= len(lookupJoin.LookupExpr) {
-						return execPlan{}, false, nil
-					}
-					out.InsertCols[indexColOrd] = exec.TableColumnOrdinal(inputColOrd)
-					// The datums are fixed for all columns in the IN expressions, so
-					// add them to DatumsFromConstraint.
-					out.DatumsFromConstraint = make([]tree.Datums, len(tupleExpr.Elems))
-					for k, tuple := range tupleExpr.Elems {
-						var constExpr *memo.ConstExpr
-						if constExpr, ok = tuple.(*memo.ConstExpr); !ok {
-							return execPlan{}, false, nil
-						}
-						out.DatumsFromConstraint[k] = make(tree.Datums, tab.ColumnCount())
-						out.DatumsFromConstraint[k][inputColOrd] = constExpr.Value
-					}
-				} else if eqExpr, ok = joinFilter.Condition.(*memo.EqExpr); ok {
-					// For equality, the key column is on the right, as opposed to on the
-					// left for IN expressions, as we are equating a left table column and
-					// right table column.
-					if rightVariableExpr, rightIsVariable := eqExpr.Right.(*memo.VariableExpr); rightIsVariable {
-						keyCol = rightVariableExpr.Col
-					}
-					if _, leftIsVariable := eqExpr.Left.(*memo.VariableExpr); !leftIsVariable {
-						return execPlan{}, false, nil
-					}
-					inputColOrd, indexColOrd, foundKeyColOrd := b.findKeyColOrd(keyCol, lookupJoin.Table, lookupJoin.Index)
-					if !foundKeyColOrd {
-						return execPlan{}, false, nil
-					}
-					// Verify the lookup expressions are on a prefix of the index key.
-					if indexColOrd >= len(lookupJoin.LookupExpr) {
-						return execPlan{}, false, nil
-					}
-					out.InsertCols[indexColOrd] = exec.TableColumnOrdinal(inputColOrd)
-				} else {
-					return execPlan{}, false, nil
-				}
-			}
-			out.MkErr = func(values tree.Datums) error {
-				return mkFastPathUniqueCheckErr(md, c, values, out.ReferencedIndex)
-			}
-		}
-
-		for _, onFilter := range lookupJoin.On {
-			if !b.ignorableNECheck(onFilter.Condition, withScan, lookupJoin.Table) {
-				return execPlan{}, false, nil
-			}
-		}
-
-		if len(out.DatumsFromConstraint) == 0 {
+		if len(c.FastPathCheck.DatumsFromConstraint) == 0 {
 			// We need at least one DatumsFromConstraint in order to perform
 			// uniqueness checks during fast-path insert. Even if DatumsFromConstraint
 			// contains no Datums, that case indicates that all values to check come
 			// from the input row.
 			return execPlan{}, false, nil
 		}
+		execFastPathCheck := &uniqChecks[i]
+		// Copy the elements built during exploration into the execbuilder
+		// structures.
+		execFastPathCheck.ReferencedTable = c.FastPathCheck.ReferencedTable
+		execFastPathCheck.ReferencedIndex = c.FastPathCheck.ReferencedIndex
+		execFastPathCheck.InsertCols = make([]exec.TableColumnOrdinal, len(c.FastPathCheck.InsertCols))
+		for j, insertCol := range c.FastPathCheck.InsertCols {
+			execFastPathCheck.InsertCols[j] = exec.TableColumnOrdinal(insertCol)
+		}
+		execFastPathCheck.MatchMethod = c.FastPathCheck.MatchMethod
+		execFastPathCheck.DatumsFromConstraint = c.FastPathCheck.DatumsFromConstraint
+		execFastPathCheck.MkErr = exec.MkErrFn(c.FastPathCheck.MkErr)
 	}
 
 	//  - there are no self-referencing foreign keys;
@@ -775,15 +264,6 @@ func (b *Builder) tryBuildFastPathInsert(ins *memo.InsertExpr) (_ execPlan, ok b
 				}
 			}
 			return mkFKCheckErr(md, c, fkVals)
-		}
-	}
-
-	if projectExpr != nil {
-		// Merge the projection with the Values expression.
-		expr := b.optimizer.Factory().CustomFuncs().
-			MergeProjectWithValues(projectExpr.Projections, projectExpr.Passthrough, values)
-		if values, ok = expr.(*memo.ValuesExpr); !ok {
-			return execPlan{}, false, nil
 		}
 	}
 
@@ -1272,7 +752,7 @@ func (b *Builder) buildUniqueChecks(checks memo.UniqueChecksExpr) error {
 				}
 				keyVals[i] = row[ord]
 			}
-			return mkUniqueCheckErr(md, c, keyVals)
+			return memo.MkUniqueCheckErr(md, c, keyVals)
 		}
 		node, err := b.factory.ConstructErrorIfRows(query.root, mkErr)
 		if err != nil {
@@ -1313,9 +793,9 @@ func (b *Builder) buildFKChecks(checks memo.FKChecksExpr) error {
 	return nil
 }
 
-// mkFastPathUniqueCheckErr is a wrapper for mkUniqueCheckErr in the insert fast
+// mkFastPathUniqueCheckErr is a wrapper for MkUniqueCheckErr in the insert fast
 // path flow, which reorders the keyVals row according to the ordering of the
-// key columns in index `idx`. This is needed because mkUniqueCheckErr assumes
+// key columns in index `idx`. This is needed because MkUniqueCheckErr assumes
 // the ordering of columns in `keyVals` matches the ordering of columns in
 // `cat.UniqueConstraint.ColumnOrdinal(tabMeta.Table, i)`.
 func mkFastPathUniqueCheckErr(
@@ -1344,49 +824,7 @@ func mkFastPathUniqueCheckErr(
 				"insert fast path failed uniqueness check, but could not find unique columns for row, %v", keyVals))
 		}
 	}
-	return mkUniqueCheckErr(md, c, newKeyVals)
-}
-
-// mkUniqueCheckErr generates a user-friendly error describing a uniqueness
-// violation. The keyVals are the values that correspond to the
-// cat.UniqueConstraint columns.
-func mkUniqueCheckErr(md *opt.Metadata, c *memo.UniqueChecksItem, keyVals tree.Datums) error {
-	tabMeta := md.TableMeta(c.Table)
-	uc := tabMeta.Table.Unique(c.CheckOrdinal)
-	constraintName := uc.Name()
-	var msg, details bytes.Buffer
-
-	// Generate an error of the form:
-	//   ERROR:  duplicate key value violates unique constraint "foo"
-	//   DETAIL: Key (k)=(2) already exists.
-	msg.WriteString("duplicate key value violates unique constraint ")
-	lexbase.EncodeEscapedSQLIdent(&msg, constraintName)
-
-	details.WriteString("Key (")
-	for i := 0; i < uc.ColumnCount(); i++ {
-		if i > 0 {
-			details.WriteString(", ")
-		}
-		col := tabMeta.Table.Column(uc.ColumnOrdinal(tabMeta.Table, i))
-		details.WriteString(string(col.ColName()))
-	}
-	details.WriteString(")=(")
-	for i, d := range keyVals {
-		if i > 0 {
-			details.WriteString(", ")
-		}
-		details.WriteString(d.String())
-	}
-
-	details.WriteString(") already exists.")
-
-	return errors.WithDetail(
-		pgerror.WithConstraintName(
-			pgerror.Newf(pgcode.UniqueViolation, "%s", msg.String()),
-			constraintName,
-		),
-		details.String(),
-	)
+	return memo.MkUniqueCheckErr(md, c, newKeyVals)
 }
 
 // mkFKCheckErr generates a user-friendly error describing a foreign key
