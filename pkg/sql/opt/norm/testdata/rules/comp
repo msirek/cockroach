@@ -961,6 +961,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── st_distance(geom:1, '010100000000000000000000000000000000000000') <= 5.0 [outer=(1), immutable]
       └── st_dwithin(geom:1, '010100000000000000000000000000000000000000', 5.0) [outer=(1), immutable, constraints=(/1: (/NULL - ])]
 
 # Geometry case with '<' operator.
@@ -973,6 +974,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── st_distance('010100000000000000000000000000000000000000', geom:1) < 5.0 [outer=(1), immutable]
       └── st_dwithinexclusive('010100000000000000000000000000000000000000', geom:1, 5.0) [outer=(1), immutable, constraints=(/1: (/NULL - ])]
 
 # Geometry case with '>=' operator.
@@ -985,6 +987,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── st_distance(geom:1, '010100000000000000000000000000000000000000') >= 5.0 [outer=(1), immutable]
       └── NOT st_dwithinexclusive(geom:1, '010100000000000000000000000000000000000000', 5.0) [outer=(1), immutable]
 
 # Geometry case with '>' operator.
@@ -997,6 +1000,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── st_distance(geom:1, '010100000000000000000000000000000000000000') > 5.0 [outer=(1), immutable]
       └── NOT st_dwithin(geom:1, '010100000000000000000000000000000000000000', 5.0) [outer=(1), immutable]
 
 # Geography case with '<=' operator.
@@ -1009,6 +1013,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── st_distance(geog:2, '0101000020E610000000000000000000000000000000000000') <= 5.0 [outer=(2), immutable]
       └── st_dwithin(geog:2, '0101000020E610000000000000000000000000000000000000', 5.0) [outer=(2), immutable, constraints=(/2: (/NULL - ])]
 
 # Geography case with '<' operator.
@@ -1021,6 +1026,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── st_distance(geog:2, '0101000020E610000000000000000000000000000000000000') < 5.0 [outer=(2), immutable]
       └── st_dwithinexclusive(geog:2, '0101000020E610000000000000000000000000000000000000', 5.0) [outer=(2), immutable, constraints=(/2: (/NULL - ])]
 
 # Regression test for #54326. Ensure the distance param is cast to a float.
@@ -1033,6 +1039,11 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1(geometry) geog:2(geography) val:3(float)
  └── filters
+      ├── lt [type=bool, outer=(2), immutable]
+      │    ├── function: st_distance [type=float]
+      │    │    ├── variable: geog:2 [type=geography]
+      │    │    └── const: '0101000020E610000000000000000000000000000000000000' [type=geography]
+      │    └── const: 5 [type=int]
       └── function: st_dwithinexclusive [type=bool, outer=(2), immutable, constraints=(/2: (/NULL - ])]
            ├── variable: geog:2 [type=geography]
            ├── const: '0101000020E610000000000000000000000000000000000000' [type=geography]
@@ -1047,6 +1058,12 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1(geometry) geog:2(geography) val:3(float)
  └── filters
+      ├── lt [type=bool, outer=(2,3), immutable]
+      │    ├── function: st_distance [type=float]
+      │    │    ├── variable: geog:2 [type=geography]
+      │    │    └── const: '0101000020E610000000000000000000000000000000000000' [type=geography]
+      │    └── cast: INT8 [type=int]
+      │         └── variable: val:3 [type=float]
       └── function: st_dwithinexclusive [type=bool, outer=(2,3), immutable, constraints=(/2: (/NULL - ])]
            ├── variable: geog:2 [type=geography]
            ├── const: '0101000020E610000000000000000000000000000000000000' [type=geography]
@@ -1064,6 +1081,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── st_distance(geog:2, '0101000020E610000000000000000000000000000000000000', true) <= 5.0 [outer=(2), immutable]
       └── st_dwithin(geog:2, '0101000020E610000000000000000000000000000000000000', 5.0, true) [outer=(2), immutable, constraints=(/2: (/NULL - ])]
 
 # --------------------------------------------------
@@ -1075,11 +1093,12 @@ norm expect=FoldCmpSTDistanceRight
 SELECT * FROM geom_geog WHERE val <= st_distance(geom, 'point(0.0 0.0)')
 ----
 select
- ├── columns: geom:1 geog:2 val:3
+ ├── columns: geom:1 geog:2 val:3!null
  ├── immutable
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── val:3 <= st_distance(geom:1, '010100000000000000000000000000000000000000') [outer=(1,3), immutable, constraints=(/3: (/NULL - ])]
       └── NOT st_dwithinexclusive(geom:1, '010100000000000000000000000000000000000000', val:3) [outer=(1,3), immutable]
 
 # Case with '<' operator.
@@ -1087,11 +1106,12 @@ norm expect=FoldCmpSTDistanceRight
 SELECT * FROM geom_geog WHERE val < st_distance(geom, 'point(0.0 0.0)')
 ----
 select
- ├── columns: geom:1 geog:2 val:3
+ ├── columns: geom:1 geog:2 val:3!null
  ├── immutable
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── val:3 < st_distance(geom:1, '010100000000000000000000000000000000000000') [outer=(1,3), immutable, constraints=(/3: (/NULL - ])]
       └── NOT st_dwithin(geom:1, '010100000000000000000000000000000000000000', val:3) [outer=(1,3), immutable]
 
 # Case with '>=' operator.
@@ -1104,6 +1124,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── val:3 >= st_distance(geom:1, '010100000000000000000000000000000000000000') [outer=(1,3), immutable, constraints=(/3: (/NULL - ])]
       └── st_dwithin(geom:1, '010100000000000000000000000000000000000000', val:3) [outer=(1,3), immutable, constraints=(/1: (/NULL - ]; /3: (/NULL - ])]
 
 # Case with '>' operator.
@@ -1116,6 +1137,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── val:3 > st_distance(geom:1, '010100000000000000000000000000000000000000') [outer=(1,3), immutable, constraints=(/3: (/NULL - ])]
       └── st_dwithinexclusive(geom:1, '010100000000000000000000000000000000000000', val:3) [outer=(1,3), immutable, constraints=(/1: (/NULL - ]; /3: (/NULL - ])]
 
 # Regression test for #55675. Handle use_spheroid param.
@@ -1128,6 +1150,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── val:3 > st_distance(geog:2, '0101000020E610000000000000000000000000000000000000', false) [outer=(2,3), immutable, constraints=(/3: (/NULL - ])]
       └── st_dwithinexclusive(geog:2, '0101000020E610000000000000000000000000000000000000', val:3, false) [outer=(2,3), immutable, constraints=(/2: (/NULL - ]; /3: (/NULL - ])]
 
 # --------------------------------------------------
@@ -1144,6 +1167,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── st_maxdistance(geom:1, '010100000000000000000000000000000000000000') <= 5.0 [outer=(1), immutable]
       └── st_dfullywithin(geom:1, '010100000000000000000000000000000000000000', 5.0) [outer=(1), immutable, constraints=(/1: (/NULL - ])]
 
 # Case with '<' operator.
@@ -1156,6 +1180,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── st_maxdistance('010100000000000000000000000000000000000000', geom:1) < 5.0 [outer=(1), immutable]
       └── st_dfullywithinexclusive('010100000000000000000000000000000000000000', geom:1, 5.0) [outer=(1), immutable, constraints=(/1: (/NULL - ])]
 
 # Case with '>=' operator.
@@ -1168,6 +1193,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── st_maxdistance(geom:1, '010100000000000000000000000000000000000000') >= 5.0 [outer=(1), immutable]
       └── NOT st_dfullywithinexclusive(geom:1, '010100000000000000000000000000000000000000', 5.0) [outer=(1), immutable]
 
 # Case with '>' operator.
@@ -1180,6 +1206,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── st_maxdistance(geom:1, '010100000000000000000000000000000000000000') > 5.0 [outer=(1), immutable]
       └── NOT st_dfullywithin(geom:1, '010100000000000000000000000000000000000000', 5.0) [outer=(1), immutable]
 
 # --------------------------------------------------
@@ -1191,11 +1218,12 @@ norm expect=FoldCmpSTMaxDistanceRight
 SELECT * FROM geom_geog WHERE val <= st_maxdistance(geom, 'point(0.0 0.0)')
 ----
 select
- ├── columns: geom:1 geog:2 val:3
+ ├── columns: geom:1 geog:2 val:3!null
  ├── immutable
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── val:3 <= st_maxdistance(geom:1, '010100000000000000000000000000000000000000') [outer=(1,3), immutable, constraints=(/3: (/NULL - ])]
       └── NOT st_dfullywithinexclusive(geom:1, '010100000000000000000000000000000000000000', val:3) [outer=(1,3), immutable]
 
 # Case with '<' operator.
@@ -1203,11 +1231,12 @@ norm expect=FoldCmpSTMaxDistanceRight
 SELECT * FROM geom_geog WHERE val < st_maxdistance(geom, 'point(0.0 0.0)')
 ----
 select
- ├── columns: geom:1 geog:2 val:3
+ ├── columns: geom:1 geog:2 val:3!null
  ├── immutable
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── val:3 < st_maxdistance(geom:1, '010100000000000000000000000000000000000000') [outer=(1,3), immutable, constraints=(/3: (/NULL - ])]
       └── NOT st_dfullywithin(geom:1, '010100000000000000000000000000000000000000', val:3) [outer=(1,3), immutable]
 
 # Case with '>=' operator.
@@ -1220,6 +1249,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── val:3 >= st_maxdistance(geom:1, '010100000000000000000000000000000000000000') [outer=(1,3), immutable, constraints=(/3: (/NULL - ])]
       └── st_dfullywithin(geom:1, '010100000000000000000000000000000000000000', val:3) [outer=(1,3), immutable, constraints=(/1: (/NULL - ]; /3: (/NULL - ])]
 
 # Case with '>' operator.
@@ -1232,6 +1262,7 @@ select
  ├── scan geom_geog
  │    └── columns: geom:1 geog:2 val:3
  └── filters
+      ├── val:3 > st_maxdistance(geom:1, '010100000000000000000000000000000000000000') [outer=(1,3), immutable, constraints=(/3: (/NULL - ])]
       └── st_dfullywithinexclusive(geom:1, '010100000000000000000000000000000000000000', val:3) [outer=(1,3), immutable, constraints=(/1: (/NULL - ]; /3: (/NULL - ])]
 
 # --------------------------------------------------

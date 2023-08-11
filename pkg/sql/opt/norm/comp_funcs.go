@@ -16,6 +16,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/builtins/builtinsregistry"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
+	"github.com/cockroachdb/cockroach/pkg/util/intsets"
 	"github.com/cockroachdb/errors"
 )
 
@@ -177,9 +178,11 @@ func (c *CustomFuncs) MakeIntersectionFunction(args memo.ScalarListExpr) opt.Sca
 	)
 }
 
-// MakeSTDWithinLeft returns an ST_DWithin function that replaces an expression
-// of the following form: ST_Distance(a,b) <= x. Note that the ST_Distance
-// function is on the left side of the inequality.
+// MakeSTDWithinLeft returns an ST_DWithin function that is similar to an
+// expression of the following form: ST_Distance(a,b) <= x. Note that the
+// ST_Distance function is on the left side of the inequality. The returned
+// function may treat empty geometries differently than the original expression,
+// so is not an exact equivalent.
 func (c *CustomFuncs) MakeSTDWithinLeft(
 	op opt.Operator, args memo.ScalarListExpr, bound opt.ScalarExpr,
 ) opt.ScalarExpr {
@@ -188,9 +191,32 @@ func (c *CustomFuncs) MakeSTDWithinLeft(
 	return c.makeSTDWithin(op, args, bound, fnName, fnIsLeftArg)
 }
 
-// MakeSTDWithinRight returns an ST_DWithin function that replaces an expression
-// of the following form: x <= ST_Distance(a,b). Note that the ST_Distance
-// function is on the right side of the inequality.
+// MakeSTDWithinLeftAndStDistance is a wrapper for MakeSTDWithinLeft, returning
+// the original matched inequality having the form:
+// ST_Distance(a,b) <= x, ANDed with an ST_DWithin function derived from it.
+func (c *CustomFuncs) MakeSTDWithinLeftAndStDistance(
+	op opt.Operator, args memo.ScalarListExpr, bound, left opt.ScalarExpr,
+) opt.ScalarExpr {
+	var leftExpr opt.ScalarExpr
+	rebuildOriginalExpression := func() {
+		leftExpr = c.f.DynamicConstruct(op, left, bound).(opt.ScalarExpr)
+	}
+	var disabledRules intsets.Fast
+	// Further folding of this expression is disabled during construction to
+	// prevent cyclic rule firing.
+	disabledRules.Add(int(opt.FoldCmpSTDistanceLeft))
+	disabledRules.Add(int(opt.FoldCmpSTDistanceRight))
+	c.f.DisableOptimizationRulesTemporarily(disabledRules, rebuildOriginalExpression)
+	rightExpr := c.MakeSTDWithinLeft(op, args, bound)
+
+	return c.f.ConstructAnd(leftExpr, rightExpr)
+}
+
+// MakeSTDWithinRight returns an ST_DWithin function that is similar to an
+// expression of the following form: x <= ST_Distance(a,b). Note that the
+// ST_Distance function is on the right side of the inequality. The returned
+// function may treat empty geometries differently than the original expression,
+// so is not an exact equivalent.
 func (c *CustomFuncs) MakeSTDWithinRight(
 	op opt.Operator, args memo.ScalarListExpr, bound opt.ScalarExpr,
 ) opt.ScalarExpr {
@@ -199,9 +225,32 @@ func (c *CustomFuncs) MakeSTDWithinRight(
 	return c.makeSTDWithin(op, args, bound, fnName, fnIsLeftArg)
 }
 
-// MakeSTDFullyWithinLeft returns an ST_DFullyWithin function that replaces an
-// expression of the following form: ST_MaxDistance(a,b) <= x. Note that the
-// ST_MaxDistance function is on the left side of the inequality.
+// MakeSTDWithinRightAndStDistance is a wrapper for MakeSTDWithinRight,
+// returning the original matched inequality having the form:
+// x <= ST_Distance(a,b), ANDed with an ST_DWithin function derived from it.
+func (c *CustomFuncs) MakeSTDWithinRightAndStDistance(
+	op opt.Operator, args memo.ScalarListExpr, bound, right opt.ScalarExpr,
+) opt.ScalarExpr {
+	var leftExpr opt.ScalarExpr
+	rebuildOriginalExpression := func() {
+		leftExpr = c.f.DynamicConstruct(op, bound, right).(opt.ScalarExpr)
+	}
+	var disabledRules intsets.Fast
+	// Further folding of this expression is disabled during construction to
+	// prevent cyclic rule firing.
+	disabledRules.Add(int(opt.FoldCmpSTDistanceLeft))
+	disabledRules.Add(int(opt.FoldCmpSTDistanceRight))
+	c.f.DisableOptimizationRulesTemporarily(disabledRules, rebuildOriginalExpression)
+	rightExpr := c.MakeSTDWithinRight(op, args, bound)
+
+	return c.f.ConstructAnd(leftExpr, rightExpr)
+}
+
+// MakeSTDFullyWithinLeft returns an ST_DFullyWithin function that is similar to
+// an expression of the following form: ST_MaxDistance(a,b) <= x. Note that the
+// ST_MaxDistance function is on the left side of the inequality. The returned
+// function may treat empty geometries differently than the original expression,
+// so is not an exact equivalent.
 func (c *CustomFuncs) MakeSTDFullyWithinLeft(
 	op opt.Operator, args memo.ScalarListExpr, bound opt.ScalarExpr,
 ) opt.ScalarExpr {
@@ -210,15 +259,61 @@ func (c *CustomFuncs) MakeSTDFullyWithinLeft(
 	return c.makeSTDWithin(op, args, bound, fnName, fnIsLeftArg)
 }
 
-// MakeSTDFullyWithinRight returns an ST_DFullyWithin function that replaces an
-// expression of the following form: x <= ST_MaxDistance(a,b). Note that the
-// ST_MaxDistance function is on the right side of the inequality.
+// MakeSTDFullyWithinLeftAndStMaxDistance is a wrapper for
+// MakeSTDFullyWithinLeft, returning the original matched inequality having
+// the form: ST_MaxDistance(a,b) <= x, ANDed with an ST_DFullyWithin function
+// derived from it.
+func (c *CustomFuncs) MakeSTDFullyWithinLeftAndStMaxDistance(
+	op opt.Operator, args memo.ScalarListExpr, bound, left opt.ScalarExpr,
+) opt.ScalarExpr {
+	var leftExpr opt.ScalarExpr
+	rebuildOriginalExpression := func() {
+		leftExpr = c.f.DynamicConstruct(op, left, bound).(opt.ScalarExpr)
+	}
+	var disabledRules intsets.Fast
+	// Further folding of this expression is disabled during construction to
+	// prevent cyclic rule firing.
+	disabledRules.Add(int(opt.FoldCmpSTMaxDistanceLeft))
+	disabledRules.Add(int(opt.FoldCmpSTMaxDistanceRight))
+	c.f.DisableOptimizationRulesTemporarily(disabledRules, rebuildOriginalExpression)
+	rightExpr := c.MakeSTDFullyWithinLeft(op, args, bound)
+
+	return c.f.ConstructAnd(leftExpr, rightExpr)
+}
+
+// MakeSTDFullyWithinRight returns an ST_DFullyWithin function that is similar
+// to an expression of the following form: x <= ST_MaxDistance(a,b). Note that
+// the ST_MaxDistance function is on the right side of the inequality. The
+// returned function may treat empty geometries differently than the original
+// expression, so is not an exact equivalent.
 func (c *CustomFuncs) MakeSTDFullyWithinRight(
 	op opt.Operator, args memo.ScalarListExpr, bound opt.ScalarExpr,
 ) opt.ScalarExpr {
 	const fnName = "st_dfullywithin"
 	const fnIsLeftArg = false
 	return c.makeSTDWithin(op, args, bound, fnName, fnIsLeftArg)
+}
+
+// MakeSTDFullyWithinRightAndStMaxDistance is a wrapper for
+// MakeSTDFullyWithinRight, returning the original matched inequality having
+// the form: x <= ST_MaxDistance(a,b), ANDed with an ST_DFullyWithin function
+// derived from it.
+func (c *CustomFuncs) MakeSTDFullyWithinRightAndStMaxDistance(
+	op opt.Operator, args memo.ScalarListExpr, bound, right opt.ScalarExpr,
+) opt.ScalarExpr {
+	var leftExpr opt.ScalarExpr
+	rebuildOriginalExpression := func() {
+		leftExpr = c.f.DynamicConstruct(op, bound, right).(opt.ScalarExpr)
+	}
+	var disabledRules intsets.Fast
+	// Further folding of this expression is disabled during construction to
+	// prevent cyclic rule firing.
+	disabledRules.Add(int(opt.FoldCmpSTMaxDistanceLeft))
+	disabledRules.Add(int(opt.FoldCmpSTMaxDistanceRight))
+	c.f.DisableOptimizationRulesTemporarily(disabledRules, rebuildOriginalExpression)
+	rightExpr := c.MakeSTDFullyWithinRight(op, args, bound)
+
+	return c.f.ConstructAnd(leftExpr, rightExpr)
 }
 
 // makeSTDWithin returns an ST_DWithin (or ST_DFullyWithin) function that

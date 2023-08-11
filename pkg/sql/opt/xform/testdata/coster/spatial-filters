@@ -132,14 +132,14 @@ WHERE st_distance(geog, st_makepoint(1.0, 1.0)::geography) < 200;
 project
  ├── columns: id:1!null
  ├── immutable
- ├── stats: [rows=55000]
- ├── cost: 535578.67
+ ├── stats: [rows=18333.33]
+ ├── cost: 1035212.01
  ├── key: (1)
  └── select
       ├── columns: id:1!null geog:4!null
       ├── immutable
-      ├── stats: [rows=55000, distinct(4)=50000, null(4)=0]
-      ├── cost: 535028.65
+      ├── stats: [rows=18333.33, distinct(4)=18333.3, null(4)=0]
+      ├── cost: 1035028.66
       ├── key: (1)
       ├── fd: (1)-->(4)
       ├── scan g
@@ -149,6 +149,7 @@ project
       │    ├── key: (1)
       │    └── fd: (1)-->(4)
       └── filters
+           ├── st_distance(geog:4, '0101000020E6100000000000000000F03F000000000000F03F') < 200.0 [outer=(4), immutable]
            └── st_dwithinexclusive(geog:4, '0101000020E6100000000000000000F03F000000000000F03F', 200.0) [outer=(4), immutable, constraints=(/4: (/NULL - ])]
 
 opt
@@ -158,14 +159,14 @@ WHERE st_distance(geog, st_makepoint(a, 1.0)::geography) < 200;
 project
  ├── columns: id:1!null
  ├── immutable
- ├── stats: [rows=55000]
- ├── cost: 1040578.77
+ ├── stats: [rows=18333.33]
+ ├── cost: 2040212.11
  ├── key: (1)
  └── select
       ├── columns: id:1!null a:2 geog:4!null
       ├── immutable
-      ├── stats: [rows=55000, distinct(4)=50000, null(4)=0]
-      ├── cost: 1040028.75
+      ├── stats: [rows=18333.33, distinct(4)=18333.3, null(4)=0]
+      ├── cost: 2040028.76
       ├── key: (1)
       ├── fd: (1)-->(2,4)
       ├── scan g
@@ -175,6 +176,7 @@ project
       │    ├── key: (1)
       │    └── fd: (1)-->(2,4)
       └── filters
+           ├── st_distance(geog:4, st_makepoint(a:2, 1.0)::GEOGRAPHY) < 200.0 [outer=(2,4), immutable]
            └── st_dwithinexclusive(geog:4, st_makepoint(a:2, 1.0)::GEOGRAPHY, 200.0) [outer=(2,4), immutable, constraints=(/4: (/NULL - ])]
 
 opt

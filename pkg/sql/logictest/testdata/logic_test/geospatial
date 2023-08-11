@@ -6008,3 +6008,78 @@ SELECT ST_AsText(ST_AsMVTGeom(
     ST_GeomFromText('LINESTRING (0 0, 10.6 0.4, 10.6 5.4, 0 -5, 0 0)'),
     ST_MakeBox2D(ST_Point(0, 0), ST_Point(20, 20)),
     20, -1, false))
+
+subtest regression_103616
+
+# Regression test for #103616
+statement ok
+CREATE TABLE t103616 (col2_4 GEOGRAPHY NOT NULL, INVERTED INDEX col2_4_idx (col2_4));
+
+statement ok
+insert into t103616 values ('0102000020E610000000000000'::GEOGRAPHY);
+
+statement ok
+insert into t103616 values ('POINT(0 0)'::GEOGRAPHY);
+
+statement ok
+SET testing_optimizer_random_seed = 656627027908814488;
+
+statement ok
+SET testing_optimizer_disable_rule_probability = 1.0;
+
+query T rowsort
+SELECT col2_4 FROM t103616
+WHERE
+    NOT ((1.2345678901234566e-43::FLOAT8 > st_distance(col2_4::GEOGRAPHY, '0106000020E610000000000000'::GEOGRAPHY)::FLOAT8) OR (st_dwithin(col2_4::GEOGRAPHY, '0106000020E610000000000000'::GEOGRAPHY, 1.2345678901234566e-43::FLOAT8) AND NOT ST_IsEmpty(col2_4::GEOGRAPHY::GEOMETRY) AND NOT ST_IsEmpty('0106000020E610000000000000'::GEOGRAPHY::GEOMETRY)));
+----
+
+# This should return no rows due to `st_distance` producing a null distance.
+query T rowsort
+SELECT col2_4 FROM t103616
+WHERE
+        (1.2345678901234566e-43:::FLOAT8 > st_distance(col2_4::GEOGRAPHY, '0106000020E610000000000000':::GEOGRAPHY)::FLOAT8);
+----
+
+# This should return no rows due to `st_distance` producing a null distance.
+query T rowsort
+SELECT col2_4 FROM t103616
+WHERE
+       NOT (1.2345678901234566e-43:::FLOAT8 > st_distance(col2_4::GEOGRAPHY, '0106000020E610000000000000':::GEOGRAPHY)::FLOAT8);
+----
+
+# This should return 1 row.
+query T rowsort
+SELECT col2_4 FROM t103616
+WHERE
+        (2.0:::FLOAT8 > st_distance(col2_4::GEOGRAPHY, 'POINT(0 0)'::GEOGRAPHY)::FLOAT8);
+----
+0101000020E610000000000000000000000000000000000000
+
+statement ok
+RESET testing_optimizer_disable_rule_probability;
+
+query T rowsort
+SELECT col2_4 FROM t103616
+WHERE
+        (1.2345678901234566e-43:::FLOAT8 > st_distance(col2_4::GEOGRAPHY, '0106000020E610000000000000':::GEOGRAPHY::GEOGRAPHY)::FLOAT8);
+----
+
+# This should return no rows due to `st_distance` producing a null distance.
+query T rowsort
+SELECT col2_4 FROM t103616
+WHERE
+       NOT (1.2345678901234566e-43:::FLOAT8 > st_distance(col2_4::GEOGRAPHY, '0106000020E610000000000000':::GEOGRAPHY)::FLOAT8);
+----
+0102000020E610000000000000
+0101000020E610000000000000000000000000000000000000
+
+# This should return 1 row.
+query T rowsort
+SELECT col2_4 FROM t103616
+WHERE
+        (2.0:::FLOAT8 > st_distance(col2_4::GEOGRAPHY, 'POINT(0 0)'::GEOGRAPHY)::FLOAT8);
+----
+0101000020E610000000000000000000000000000000000000
+
+statement ok
+RESET testing_optimizer_random_seed;

@@ -273,9 +273,11 @@
 (MakeIntersectionFunction $args)
 
 # FoldCmpSTDistanceLeft replaces an expression of the form:
-# 'ST_Distance(...) <= x' with a call to ST_DWithin or ST_DWithinExclusive. This
-# replacement allows early-exit behavior, and may enable use of an inverted
-# index scan. See the MakeSTDWithin method for the specific variation on
+# 'ST_Distance(...) <= x' with a call to ST_DWithin or ST_DWithinExclusive
+# ANDed with the original expression. The new ST_DWithin* expression may hide
+# a NULL distance when the geometry is empty, so is not an exact replacement.
+# The new expression allows early-exit behavior, and may enable use of an
+# inverted index scan. See the MakeSTDWithin method for the specific variation on
 # ST_DWithin that is used to replace expressions with different comparison
 # operators (e.g. '<' vs '<=').
 [FoldCmpSTDistanceLeft, Normalize]
@@ -284,7 +286,7 @@
     $right:*
 )
 =>
-(MakeSTDWithinLeft (OpName) $args $right)
+(MakeSTDWithinLeftAndStDistance (OpName) $args $right (Function $args $private))
 
 # FoldCmpSTDistanceRight mirrors FoldCmpSTDistanceLeft.
 [FoldCmpSTDistanceRight, Normalize]
@@ -293,7 +295,7 @@
     (Function $args:* $private:(FunctionPrivate "st_distance"))
 )
 =>
-(MakeSTDWithinRight (OpName) $args $left)
+(MakeSTDWithinRightAndStDistance (OpName) $args $left (Function $args $private))
 
 # FoldCmpSTMaxDistanceLeft is a variant of FoldCmpSTDistanceLeft that matches
 # ST_MaxDistance instead of ST_Distance.
@@ -306,7 +308,7 @@
     $right:*
 )
 =>
-(MakeSTDFullyWithinLeft (OpName) $args $right)
+(MakeSTDFullyWithinLeftAndStMaxDistance (OpName) $args $right (Function $args $private))
 
 # FoldCmpSTMaxDistanceRight mirrors FoldCmpSTMaxDistanceLeft.
 [FoldCmpSTMaxDistanceRight, Normalize]
@@ -318,7 +320,7 @@
     )
 )
 =>
-(MakeSTDFullyWithinRight (OpName) $args $left)
+(MakeSTDFullyWithinRightAndStMaxDistance (OpName) $args $left (Function $args $private))
 
 # FoldEqTrue replaces x = True with x.
 [FoldEqTrue, Normalize]
