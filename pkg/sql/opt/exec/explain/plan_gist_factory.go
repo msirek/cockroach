@@ -146,9 +146,10 @@ func (f *PlanGistFactory) ConstructPlan(
 	subqueries []exec.Subquery,
 	cascades []exec.Cascade,
 	checks []exec.Node,
+	fastPathChecks []exec.Node,
 	rootRowCount int64,
 ) (exec.Plan, error) {
-	plan, err := f.wrappedFactory.ConstructPlan(root, subqueries, cascades, checks, rootRowCount)
+	plan, err := f.wrappedFactory.ConstructPlan(root, subqueries, cascades, checks, fastPathChecks, rootRowCount)
 	return plan, err
 }
 

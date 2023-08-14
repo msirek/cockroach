@@ -74,6 +74,11 @@ type Builder struct {
 	// any cascades.
 	checks []exec.Node
 
+	// fastPathChecks accumulates check queries that are constructed to aid in
+	// building of insert fast path unique checks. This is only ever built as
+	// exec nodes for displaying in EXPLAIN output.
+	fastPathChecks []exec.Node
+
 	// nameGen is used to generate names for the tables that will be created for
 	// each relational subexpression when evalCtx.SessionData.SaveTablesPrefix is
 	// non-empty.
@@ -260,7 +265,7 @@ func (b *Builder) Build() (_ exec.Plan, err error) {
 	}
 
 	rootRowCount := int64(b.e.(memo.RelExpr).Relational().Statistics().RowCountIfAvailable())
-	return b.factory.ConstructPlan(plan.root, b.subqueries, b.cascades, b.checks, rootRowCount)
+	return b.factory.ConstructPlan(plan.root, b.subqueries, b.cascades, b.checks, b.fastPathChecks, rootRowCount)
 }
 
 func (b *Builder) wrapFunction(fnName string) (tree.ResolvableFunctionReference, error) {

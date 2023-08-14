@@ -865,6 +865,7 @@ func (e *distSQLSpecExecFactory) ConstructPlan(
 	subqueries []exec.Subquery,
 	cascades []exec.Cascade,
 	checks []exec.Node,
+	fastPathChecks []exec.Node,
 	rootRowCount int64,
 ) (exec.Plan, error) {
 	if len(subqueries) != 0 {
@@ -881,7 +882,7 @@ func (e *distSQLSpecExecFactory) ConstructPlan(
 	} else {
 		p.physPlan.onClose = e.planCtx.getCleanupFunc()
 	}
-	return constructPlan(e.planner, root, subqueries, cascades, checks, rootRowCount)
+	return constructPlan(e.planner, root, subqueries, cascades, checks, fastPathChecks, rootRowCount)
 }
 
 func (e *distSQLSpecExecFactory) ConstructExplainOpt(

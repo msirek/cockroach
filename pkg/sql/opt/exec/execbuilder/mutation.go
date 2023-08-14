@@ -20,6 +20,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/opt"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/cat"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/exec"
+	"github.com/cockroachdb/cockroach/pkg/sql/opt/exec/explain"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/memo"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
@@ -121,6 +122,12 @@ func (b *Builder) buildInsert(ins *memo.InsertExpr) (execPlan, error) {
 
 	if err := b.buildUniqueChecks(ins.UniqueChecks); err != nil {
 		return execPlan{}, err
+	}
+
+	if _, isExplain := b.factory.(*explain.Factory); isExplain && b.evalCtx.SessionData().ShowInsertFastPathChecks {
+		if err := b.buildFastPathUniqueChecks(ins.FastPathUniqueChecks); err != nil {
+			return execPlan{}, err
+		}
 	}
 
 	if err := b.buildFKChecks(ins.FKChecks); err != nil {
@@ -741,6 +748,23 @@ func (b *Builder) buildUniqueChecks(checks memo.UniqueChecksExpr) error {
 			return err
 		}
 		b.checks = append(b.checks, node)
+	}
+	return nil
+}
+
+// buildFastPathUniqueChecks builds check queries based on memo expressions
+// which are used to aid in the construction insert fast path uniqueness checks.
+// These check queries are never executed, and used solely for EXPLAIN purposes.
+func (b *Builder) buildFastPathUniqueChecks(checks memo.FastPathUniqueChecksExpr) error {
+	for i := range checks {
+		c := &checks[i]
+		// Construct the query that finds all rows having a given combination of
+		// values in the unique check columns.
+		query, err := b.buildRelational(c.Check)
+		if err != nil {
+			return err
+		}
+		b.fastPathChecks = append(b.fastPathChecks, query.root)
 	}
 	return nil
 }

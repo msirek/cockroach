@@ -31,6 +31,7 @@ func constructPlan(
 	subqueries []exec.Subquery,
 	cascades []exec.Cascade,
 	checks []exec.Node,
+	fastPathChecks []exec.Node,
 	rootRowCount int64,
 ) (exec.Plan, error) {
 	res := &planComponents{}

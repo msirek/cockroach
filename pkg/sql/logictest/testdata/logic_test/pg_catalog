@@ -2810,6 +2810,7 @@ server_encoding                                            UTF8                N
 server_version                                             13.0.0              NULL      NULL        NULL        string
 server_version_num                                         130000              NULL      NULL        NULL        string
 session_user                                               root                NULL      NULL        NULL        string
+show_insert_fast_path_checks                               off                 NULL      NULL        NULL        string
 show_primary_key_constraint_on_not_visible_columns         on                  NULL      NULL        NULL        string
 sql_safe_updates                                           off                 NULL      NULL        NULL        string
 standard_conforming_strings                                on                  NULL      NULL        NULL        string
@@ -2972,6 +2973,7 @@ server_encoding                                            UTF8                N
 server_version                                             13.0.0              NULL  user     NULL      13.0.0              13.0.0
 server_version_num                                         130000              NULL  user     NULL      130000              130000
 session_user                                               root                NULL  user     NULL      root                root
+show_insert_fast_path_checks                               off                 NULL  user     NULL      off                 off
 show_primary_key_constraint_on_not_visible_columns         on                  NULL  user     NULL      on                  on
 sql_safe_updates                                           off                 NULL  user     NULL      off                 off
 standard_conforming_strings                                on                  NULL  user     NULL      on                  on
@@ -3134,6 +3136,7 @@ server_version                                             NULL    NULL     NULL
 server_version_num                                         NULL    NULL     NULL     NULL        NULL
 session_id                                                 NULL    NULL     NULL     NULL        NULL
 session_user                                               NULL    NULL     NULL     NULL        NULL
+show_insert_fast_path_checks                               NULL    NULL     NULL     NULL        NULL
 show_primary_key_constraint_on_not_visible_columns         NULL    NULL     NULL     NULL        NULL
 sql_safe_updates                                           NULL    NULL     NULL     NULL        NULL
 standard_conforming_strings                                NULL    NULL     NULL     NULL        NULL

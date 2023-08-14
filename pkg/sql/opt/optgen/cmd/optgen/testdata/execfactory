@@ -63,6 +63,12 @@ type Factory interface {
 	// Checks are executed after all cascades have been executed. They don't
 	// return results but can generate errors (e.g. foreign key check failures).
 	//
+	// FastPathChecks are not executed, and are typically only populated when
+	// session setting show_insert_fast_path_checks is true, in order to display
+	// them in EXPLAIN output. Details from FastPathChecks are used to build the
+	// actual KV lookups for insert fast path uniqueness checks, so it is useful
+	// for testing purposes to be able to see these checks in the EXPLAIN.
+	//
 	// RootRowCount is the number of rows returned by the root node, negative if
 	// the stats weren't available to make a good estimate.
 	ConstructPlan(
@@ -70,6 +76,7 @@ type Factory interface {
 		subqueries []Subquery,
 		cascades []Cascade,
 		checks []Node,
+		fastPathChecks []Node,
 		rootRowCount int64,
 	) (Plan, error)
 
@@ -107,6 +114,7 @@ func (StubFactory) ConstructPlan(
 	subqueries []Subquery,
 	cascades []Cascade,
 	checks []Node,
+	fastPathChecks []Node,
 	rootRowCount int64,
 ) (Plan, error) {
 	return struct{}{}, nil

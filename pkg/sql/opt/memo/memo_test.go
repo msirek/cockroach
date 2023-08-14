@@ -392,6 +392,12 @@ func TestMemoIsStale(t *testing.T) {
 	evalCtx.SessionData().DurableLockingForSerializable = false
 	notStale()
 
+	// Stale show_insert_fast_path_checks.
+	evalCtx.SessionData().ShowInsertFastPathChecks = true
+	stale()
+	evalCtx.SessionData().ShowInsertFastPathChecks = false
+	notStale()
+
 	// Stale txn isolation level.
 	evalCtx.TxnIsoLevel = isolation.ReadCommitted
 	stale()

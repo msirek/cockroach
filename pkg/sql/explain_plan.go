@@ -251,6 +251,9 @@ func (e *explainPlanNode) Close(ctx context.Context) {
 	for i := range e.plan.Checks {
 		closeNode(e.plan.Checks[i].WrappedNode())
 	}
+	for i := range e.plan.FastPathChecks {
+		closeNode(e.plan.Checks[i].WrappedNode())
+	}
 	if e.run.results != nil {
 		e.run.results.Close(ctx)
 	}

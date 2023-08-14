@@ -82,6 +82,7 @@ func (g *execFactoryGen) genExecFactory() {
 	g.w.writeIndent("subqueries []Subquery,\n")
 	g.w.writeIndent("cascades []Cascade,\n")
 	g.w.writeIndent("checks []Node,\n")
+	g.w.writeIndent("fastPathChecks []Node,\n")
 	g.w.writeIndent("rootRowCount int64,\n")
 	g.w.unnest(") (Plan, error)\n")
 
@@ -120,6 +121,7 @@ func (g *execFactoryGen) genStubFactory() {
 	g.w.writeIndent("subqueries []Subquery,\n")
 	g.w.writeIndent("cascades []Cascade,\n")
 	g.w.writeIndent("checks []Node,\n")
+	g.w.writeIndent("fastPathChecks []Node,\n")
 	g.w.writeIndent("rootRowCount int64,\n")
 	g.w.unnest(") (Plan, error) {\n")
 	g.w.nestIndent("return struct{}{}, nil\n")

@@ -62,7 +62,7 @@ func Emit(plan *Plan, ob *OutputBuilder, spanFormatFn SpanFormatFn) error {
 		return nil
 	}
 
-	if len(plan.Subqueries) == 0 && len(plan.Cascades) == 0 && len(plan.Checks) == 0 {
+	if len(plan.Subqueries) == 0 && len(plan.Cascades) == 0 && len(plan.Checks) == 0 && len(plan.FastPathChecks) == 0 {
 		return walk(plan.Root)
 	}
 	ob.EnterNode("root", plan.Root.Columns(), plan.Root.Ordering())
@@ -116,6 +116,13 @@ func Emit(plan *Plan, ob *OutputBuilder, spanFormatFn SpanFormatFn) error {
 	}
 	for _, n := range plan.Checks {
 		ob.EnterMetaNode("constraint-check")
+		if err := walk(n); err != nil {
+			return err
+		}
+		ob.LeaveNode()
+	}
+	for _, n := range plan.FastPathChecks {
+		ob.EnterMetaNode("fast-path-unique-check")
 		if err := walk(n); err != nil {
 			return err
 		}

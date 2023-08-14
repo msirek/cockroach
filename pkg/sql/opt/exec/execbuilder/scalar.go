@@ -851,7 +851,8 @@ func (b *Builder) buildSubquery(
 				return expectedLazyRoutineError("check")
 			}
 			plan, err := b.factory.ConstructPlan(
-				ePlan.root, nil /* subqueries */, nil /* cascades */, nil /* checks */, inputRowCount,
+				ePlan.root, nil /* subqueries */, nil /* cascades */, nil, /* checks */
+				nil /* fastPathChecks */, inputRowCount,
 			)
 			if err != nil {
 				return err

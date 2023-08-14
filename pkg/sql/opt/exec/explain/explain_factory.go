@@ -110,12 +110,13 @@ func newNode(
 // Plan is the result of ConstructPlan; provides access to the exec.Plan
 // produced by the wrapped factory.
 type Plan struct {
-	Root        *Node
-	Subqueries  []exec.Subquery
-	Cascades    []exec.Cascade
-	Checks      []*Node
-	WrappedPlan exec.Plan
-	Gist        PlanGist
+	Root           *Node
+	Subqueries     []exec.Subquery
+	Cascades       []exec.Cascade
+	Checks         []*Node
+	FastPathChecks []*Node
+	WrappedPlan    exec.Plan
+	Gist           PlanGist
 }
 
 var _ exec.Plan = &Plan{}
@@ -138,16 +139,21 @@ func (f *Factory) ConstructPlan(
 	subqueries []exec.Subquery,
 	cascades []exec.Cascade,
 	checks []exec.Node,
+	fastPathChecks []exec.Node,
 	rootRowCount int64,
 ) (exec.Plan, error) {
 	p := &Plan{
-		Root:       root.(*Node),
-		Subqueries: subqueries,
-		Cascades:   cascades,
-		Checks:     make([]*Node, len(checks)),
+		Root:           root.(*Node),
+		Subqueries:     subqueries,
+		Cascades:       cascades,
+		Checks:         make([]*Node, len(checks)),
+		FastPathChecks: make([]*Node, len(fastPathChecks)),
 	}
 	for i := range checks {
 		p.Checks[i] = checks[i].(*Node)
+	}
+	for i := range fastPathChecks {
+		p.FastPathChecks[i] = fastPathChecks[i].(*Node)
 	}
 
 	wrappedSubqueries := append([]exec.Subquery(nil), subqueries...)
@@ -164,9 +170,13 @@ func (f *Factory) ConstructPlan(
 	for i := range wrappedChecks {
 		wrappedChecks[i] = checks[i].(*Node).WrappedNode()
 	}
+	wrappedFastPathChecks := make([]exec.Node, len(fastPathChecks))
+	for i := range wrappedFastPathChecks {
+		wrappedFastPathChecks[i] = fastPathChecks[i].(*Node).WrappedNode()
+	}
 	var err error
 	p.WrappedPlan, err = f.wrappedFactory.ConstructPlan(
-		p.Root.WrappedNode(), wrappedSubqueries, wrappedCascades, wrappedChecks, rootRowCount,
+		p.Root.WrappedNode(), wrappedSubqueries, wrappedCascades, wrappedChecks, wrappedFastPathChecks, rootRowCount,
 	)
 	if err != nil {
 		return nil, err

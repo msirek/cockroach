@@ -2856,6 +2856,23 @@ var varGen = map[string]sessionVar{
 		},
 		GlobalDefault: globalFalse,
 	},
+
+	// CockroachDB extension.
+	`show_insert_fast_path_checks`: {
+		GetStringVal: makePostgresBoolGetStringValFn(`show_insert_fast_path_checks`),
+		Set: func(_ context.Context, m sessionDataMutator, s string) error {
+			b, err := paramparse.ParseBoolVar("show_insert_fast_path_checks", s)
+			if err != nil {
+				return err
+			}
+			m.SetShowInsertFastPathChecks(b)
+			return nil
+		},
+		Get: func(evalCtx *extendedEvalContext, _ *kv.Txn) (string, error) {
+			return formatBoolAsPostgresSetting(evalCtx.SessionData().ShowInsertFastPathChecks), nil
+		},
+		GlobalDefault: globalFalse,
+	},
 }
 
 func ReplicationModeFromString(s string) (sessiondatapb.ReplicationMode, error) {

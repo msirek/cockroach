@@ -5380,6 +5380,7 @@ server_version                                             13.0.0
 server_version_num                                         130000
 session_authorization                                      root
 session_user                                               root
+show_insert_fast_path_checks                               off
 show_primary_key_constraint_on_not_visible_columns         on
 sql_safe_updates                                           off
 ssl                                                        on
