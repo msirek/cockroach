@@ -1188,6 +1188,7 @@ func (s *Smither) makeUpdate(refs colRefs) (*tree.Update, []*tableRef, bool) {
 
 	var hasJoinTable bool
 	var from tree.TableExprs
+	var joinPreds tree.TypedExpr
 	// With 50% probably add another table into the FROM clause.
 	for s.coin() {
 		t, _, tRef, c, ok := s.getSchemaTable()
@@ -1197,13 +1198,29 @@ func (s *Smither) makeUpdate(refs colRefs) (*tree.Update, []*tableRef, bool) {
 		hasJoinTable = true
 		from = append(from, t)
 		tRefs = append(tRefs, tRef)
+
+		// Build a join predicate 90% of the time.
+		if available, ok := getAvailablePairedColsForJoinPreds(s, cols, c); ok && s.d100() > 10 {
+			cond := makeAndedJoinCond(s, available, false /* onlyEqualityPreds */)
+			if joinPreds == nil {
+				joinPreds = cond
+			} else {
+				joinPreds = tree.NewTypedAndExpr(joinPreds, cond)
+			}
+		}
+
 		cols = append(cols, c...)
 	}
-
+	var whereClause *tree.Where
+	if joinPreds == nil {
+		whereClause = s.makeWhere(cols, hasJoinTable)
+	} else {
+		whereClause = tree.NewWhere("WHERE", joinPreds)
+	}
 	update := &tree.Update{
 		Table:     table,
 		From:      from,
-		Where:     s.makeWhere(cols, hasJoinTable),
+		Where:     whereClause,
 		OrderBy:   s.makeOrderBy(cols),
 		Limit:     makeLimit(s),
 		Returning: &tree.NoReturningClause{},
