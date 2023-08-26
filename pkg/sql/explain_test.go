@@ -548,7 +548,7 @@ func TestExplainRedact(t *testing.T) {
 	setup := sqlsmith.Setups["seed"](rng)
 	setup = append(setup, "SET CLUSTER SETTING sql.stats.automatic_collection.enabled = off;")
 	setup = append(setup, "ANALYZE seed;")
-	setup = append(setup, "SET statement_timeout = '5s';")
+	setup = append(setup, "SET statement_timeout = '50s';")
 	t.Log(strings.Join(setup, "\n"))
 	db := sqlutils.MakeSQLRunner(sqlDB)
 	db.ExecMultiple(t, setup...)

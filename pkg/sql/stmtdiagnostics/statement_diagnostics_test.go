@@ -14,6 +14,7 @@ import (
 	"context"
 	gosql "database/sql"
 	"fmt"
+	"github.com/cockroachdb/cockroach/pkg/ccl"
 	"strings"
 	"sync"
 	"testing"
@@ -43,6 +44,7 @@ import (
 func TestDiagnosticsRequest(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+	defer ccl.TestingEnableEnterprise()()
 
 	s, db, _ := serverutils.StartServer(t, base.TestServerArgs{})
 	ctx := context.Background()
@@ -93,6 +95,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 
 	// Ask to trace a particular query.
 	t.Run("basic", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		reqID, err := registry.InsertRequestInternal(
 			ctx, "INSERT INTO test VALUES (_)", anyPlan, noAntiMatch,
 			sampleAll, noLatencyThreshold, noExpiration,
@@ -110,6 +113,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 
 	// Verify that we can handle multiple requests at the same time.
 	t.Run("multiple", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		id1, err := registry.InsertRequestInternal(
 			ctx, "INSERT INTO test VALUES (_)", anyPlan, noAntiMatch,
 			sampleAll, noLatencyThreshold, noExpiration,
@@ -139,6 +143,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 
 	// Verify that EXECUTE triggers diagnostics collection (#66048).
 	t.Run("execute", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		id, err := registry.InsertRequestInternal(
 			ctx, "SELECT x + $1 FROM test", anyPlan, noAntiMatch,
 			sampleAll, noLatencyThreshold, noExpiration,
@@ -151,6 +156,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 
 	// Verify that if the traced query times out, the bundle is still saved.
 	t.Run("timeout", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		reqID, err := registry.InsertRequestInternal(
 			ctx, "SELECT pg_sleep(_)", anyPlan, noAntiMatch,
 			sampleAll, noLatencyThreshold, noExpiration,
@@ -173,6 +179,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 	// Verify that the bundle for a conditional request is only created when the
 	// condition is satisfied.
 	t.Run("conditional", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		minExecutionLatency := 100 * time.Millisecond
 		reqID, err := registry.InsertRequestInternal(
 			ctx, "SELECT pg_sleep(_)", anyPlan, noAntiMatch,
@@ -193,6 +200,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 	// Verify that if a conditional request expired, the bundle for it is not
 	// created even if the condition is satisfied.
 	t.Run("conditional expired", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		minExecutionLatency, expiresAfter := 100*time.Millisecond, time.Nanosecond
 		reqID, err := registry.InsertRequestInternal(
 			ctx, "SELECT pg_sleep(_)", anyPlan, noAntiMatch,
@@ -212,6 +220,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 	// a conditional diagnostics request and at least one instance satisfies the
 	// conditional, then the bundle is collected.
 	t.Run("conditional with concurrency", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		minExecutionLatency := 100 * time.Millisecond
 		reqID, err := registry.InsertRequestInternal(
 			ctx, "SELECT pg_sleep($1)", anyPlan, noAntiMatch,
@@ -245,12 +254,14 @@ func TestDiagnosticsRequest(t *testing.T) {
 	// Verify that an error is returned when attempting to cancel non-existent
 	// request.
 	t.Run("cancel non-existent request", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		require.NotNil(t, registry.CancelRequest(ctx, 123456789))
 	})
 
 	// Verify that if a request (either conditional or unconditional, w/ or w/o
 	// expiration) is canceled, the bundle for it is not created afterwards.
 	t.Run("request canceled", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		const fprint = "SELECT pg_sleep(_)"
 		for _, conditional := range []bool{false, true} {
 			t.Run(fmt.Sprintf("conditional=%t", conditional), func(t *testing.T) {
@@ -284,9 +295,11 @@ func TestDiagnosticsRequest(t *testing.T) {
 	// Verify that if a request (either conditional or unconditional) is
 	// canceled, the ongoing bundle for it is still created.
 	t.Run("ongoing request canceled", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		const fprint = "SELECT pg_sleep(_)"
 		for _, conditional := range []bool{false, true} {
 			t.Run("conditional", func(t *testing.T) {
+				defer ccl.TestingEnableEnterprise()()
 				// There is a possibility that the request is canceled before
 				// the query starts, so we allow for SucceedsSoon on this test.
 				testutils.SucceedsSoon(t, func() error {
@@ -334,6 +347,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 
 	// Ask to trace a statement probabilistically.
 	t.Run("probabilistic sample", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		samplingProbability, minExecutionLatency := 0.9999, time.Microsecond
 		reqID, err := registry.InsertRequestInternal(
 			ctx, "SELECT pg_sleep(_)", anyPlan, noAntiMatch,
@@ -353,6 +367,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 	})
 
 	t.Run("sampling without latency threshold disallowed", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		samplingProbability, expiresAfter := 0.5, time.Second
 		_, err := registry.InsertRequestInternal(
 			ctx, "SELECT pg_sleep(_)", anyPlan, noAntiMatch,
@@ -362,6 +377,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 	})
 
 	t.Run("continuous capture disabled without sampling probability", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		// We validate that continuous captures is disabled when a sampling
 		// probability of 0.0 is used. We know that it's disabled given the
 		// diagnostic request is marked as completed despite us not getting to
@@ -389,6 +405,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 	})
 
 	t.Run("continuous capture disabled without expiration timestamp", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		// We don't mark continuous captures as completed until they've expired,
 		// so we require an explicit expiration set. See previous test case for
 		// some commentary.
@@ -414,6 +431,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 	})
 
 	t.Run("continuous capture", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		samplingProbability, minExecutionLatency, expiresAfter := 0.9999, time.Microsecond, time.Hour
 		reqID, err := registry.InsertRequestInternal(
 			ctx, "SELECT pg_sleep(_)", anyPlan, noAntiMatch,
@@ -446,6 +464,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 	})
 
 	t.Run("continuous capture until expiration", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		samplingProbability, minExecutionLatency, expiresAfter := 0.9999, time.Microsecond, 100*time.Millisecond
 		reqID, err := registry.InsertRequestInternal(
 			ctx, "SELECT pg_sleep(_)", anyPlan, noAntiMatch,
@@ -472,6 +491,7 @@ func TestDiagnosticsRequest(t *testing.T) {
 	})
 
 	t.Run("plan-gist matching", func(t *testing.T) {
+		defer ccl.TestingEnableEnterprise()()
 		// Set up two tables such that the same query fingerprint would get
 		// different plans based on the placeholder values.
 		runner.Exec(t, "CREATE TABLE small (k PRIMARY KEY) AS VALUES (1), (2);")

@@ -33,9 +33,9 @@ go_test(
     ],
     args = ["-test.timeout=295s"],
     embed = [":stmtdiagnostics"],
-    tags = ["no-remote-exec"],
     deps = [
         "//pkg/base",
+        "//pkg/ccl",
         "//pkg/keys",
         "//pkg/kv/kvpb",
         "//pkg/kv/kvserver",
