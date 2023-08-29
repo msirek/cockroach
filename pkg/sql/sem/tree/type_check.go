@@ -2661,15 +2661,33 @@ func typeCheckSameTypedExprs(
 			// https://www.postgresql.org/docs/current/typeconv-union-case.html:
 			// If the candidate type can be implicitly converted to the other type,
 			// but not vice-versa, select the other type as the new candidate type.
-			if typ := typedExpr.ResolvedType(); cast.ValidCast(firstValidType, typ, cast.ContextImplicit) {
-				if !cast.ValidCast(typ, firstValidType, cast.ContextImplicit) {
+			if typ := typedExpr.ResolvedType(); !typ.Identical(firstValidType) {
+				if cast.ValidCast(typ, firstValidType, cast.ContextImplicit) {
+					// Apply a CAST if casting the current expression to the first valid
+					// type can be done implicitly.
+					typedExpr = NewTypedCastExpr(typedExpr, firstValidType)
+				} else if !cast.ValidCast(typ, firstValidType, cast.ContextImplicit) {
 					firstValidType = typ
+					firstValidIdx = i
 				}
 			}
 			if typ := typedExpr.ResolvedType(); !(typ.Equivalent(firstValidType) || typ.Family() == types.UnknownFamily) {
 				return nil, nil, unexpectedTypeError(exprs[i], firstValidType, typ)
 			}
 			typedExprs[i] = typedExpr
+		}
+		// Correct the typed expressions at the front of the list to make sure their
+		// types exactly match the final type selection of expression as a whole,
+		// including things like TupleLabels, etc.
+		for i, ok := s.resolvableIdxs.Next(0); ok && i < firstValidIdx; i, ok = s.resolvableIdxs.Next(i + 1) {
+			oldType := typedExprs[i].ResolvedType()
+			if oldType.Identical(firstValidType) {
+				continue
+			}
+			if !cast.ValidCast(oldType, firstValidType, cast.ContextImplicit) {
+				return nil, nil, unexpectedTypeError(exprs[i], firstValidType, oldType)
+			}
+			typedExprs[i] = NewTypedCastExpr(typedExprs[i], firstValidType)
 		}
 		if !constIdxs.Empty() {
 			if _, err := typeCheckSameTypedConsts(s, firstValidType, true); err != nil {

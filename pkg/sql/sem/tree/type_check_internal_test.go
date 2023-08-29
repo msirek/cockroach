@@ -136,6 +136,11 @@ func ddecimal(f float64) copyableExpr {
 		return dd
 	}
 }
+func dfloat(f float64) copyableExpr {
+	return func() tree.Expr {
+		return tree.NewDFloat(tree.DFloat(f))
+	}
+}
 func placeholder(id tree.PlaceholderIdx) copyableExpr {
 	return func() tree.Expr {
 		return newPlaceholder(id)
@@ -310,7 +315,7 @@ func TestTypeCheckSameTypedExprsError(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 	decimalIntMismatchErr := `expected .* to be of type (decimal|int), found type (decimal|int)`
-	tupleIntMismatchErr := `expected .* to be of type (tuple|int), found type (tuple|int)`
+	tupleIntMismatchErr := `expected .* to be of type (tuple{int}|tuple|int), found type (tuple{int}|tuple|int)`
 	tupleLenErr := `expected tuple .* to have a length of .*`
 	placeholderErr := `could not determine data type of placeholder .*`
 	placeholderAlreadyAssignedErr := `placeholder .* already has type (decimal|int), cannot assign (decimal|int)`
@@ -353,25 +358,27 @@ func TestTypeCheckSameTypedExprsError(t *testing.T) {
 	}
 }
 
-func TestTypeCheckSameTypedExprsImplicitCastOneWay(t *testing.T) {
+func TestTypeCheckSameTypedExprsOrderInvariant(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
-	decimalIntMismatchErr := `expected .* to be of type (decimal|int), found type (decimal|int)`
-	tupleDecimalIntMismatchErr := `tuples .* are not the same type: ` + decimalIntMismatchErr
 
 	testData := []struct {
 		ptypes  tree.PlaceholderTypes
 		desired *types.T
 		exprs   []copyableExpr
 
-		expectedErr string
+		expectedTypeFamily types.Family
 	}{
-		// For each of these test cases, it should be possible to implicitly cast
-		// from left to right but not vice-versa.
+		// For each of these test cases, a CAST should be applied in the direction
+		// which can be done implicitly, no matter the input order of expressions.
+		// Verify that swapping the order of expressions causes the resulting typed
+		// expressions to be of the proper type.
 		// Single type mismatches.
-		{nil, nil, exprs(dint(1), ddecimal(1)), decimalIntMismatchErr},
+		{nil, nil, exprs(dint(1), ddecimal(1)), types.DecimalFamily},
+		{nil, nil, exprs(dint(1), dfloat(1.1), ddecimal(1)), types.FloatFamily},
+		{nil, nil, exprs(dint(1), dfloat(1.1), ddecimal(1)), types.FloatFamily},
 		// Tuple type mismatches.
-		{nil, nil, exprs(tuple(dint(1)), tuple(ddecimal(1))), tupleDecimalIntMismatchErr},
+		{nil, nil, exprs(tuple(dint(1)), tuple(ddecimal(1))), types.TupleFamily},
 	}
 	ctx := context.Background()
 	for i, d := range testData {
@@ -390,13 +397,23 @@ func TestTypeCheckSameTypedExprsImplicitCastOneWay(t *testing.T) {
 			); err != nil {
 				t.Errorf("%d: unexpected error returned from TypeCheckSameTypedExprs: %v", i, err)
 			}
-			// Right to left fails.
+			// Swapping expression order causes the CAST to be applied in the
+			// opposite direction.
 			exprs := make([]copyableExpr, len(d.exprs))
-			exprs[0], exprs[1] = d.exprs[1], d.exprs[0]
-			if _, _, err := tree.TypeCheckSameTypedExprs(
+			if len(exprs) != 2 {
+				copy(exprs, d.exprs)
+			}
+			exprs[0], exprs[len(d.exprs)-1] = d.exprs[len(d.exprs)-1], d.exprs[0]
+			typedExprs, _, err := tree.TypeCheckSameTypedExprs(
 				ctx, &semaCtx, desired, buildExprs(exprs)...,
-			); !testutils.IsError(err, d.expectedErr) {
-				t.Errorf("%d: expected %s, but found %v", i, d.expectedErr, err)
+			)
+			if err != nil {
+				t.Errorf("Expected no error, but found %v", err)
+			}
+			for _, typedExpr := range typedExprs {
+				if typedExpr.ResolvedType().Family() != d.expectedTypeFamily {
+					t.Errorf("Expected type family %v, but found %v", d.expectedTypeFamily, typedExpr.ResolvedType().Family())
+				}
 			}
 		})
 	}
