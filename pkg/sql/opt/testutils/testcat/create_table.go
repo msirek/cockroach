@@ -221,7 +221,8 @@ func (tc *Catalog) CreateTable(stmt *tree.CreateTable) *Table {
 			nil,                /* computedExpr */
 			nil,                /* onUpdateExpr */
 			cat.NotGeneratedAsIdentity,
-			nil, /* generatedAsIdentitySequenceOption */
+			nil,   /* generatedAsIdentitySequenceOption */
+			false, /* expressionIndexColumn */
 		)
 		tab.Columns = append(tab.Columns, rowid)
 	}
@@ -251,7 +252,8 @@ func (tc *Catalog) CreateTable(stmt *tree.CreateTable) *Table {
 		nil, /* computedExpr */
 		nil, /* onUpdateExpr */
 		cat.NotGeneratedAsIdentity,
-		nil, /* generatedAsIdentitySequenceOption */
+		nil,   /* generatedAsIdentitySequenceOption */
+		false, /* expressionIndexColumn */
 	)
 	tab.Columns = append(tab.Columns, mvcc)
 
@@ -270,7 +272,8 @@ func (tc *Catalog) CreateTable(stmt *tree.CreateTable) *Table {
 		nil, /* computedExpr */
 		nil, /* onUpdateExpr */
 		cat.NotGeneratedAsIdentity,
-		nil, /* generatedAsIdentitySequenceOption */
+		nil,   /* generatedAsIdentitySequenceOption */
+		false, /* expressionIndexColumn */
 	)
 	tab.Columns = append(tab.Columns, tableoid)
 
@@ -452,7 +455,8 @@ func (tc *Catalog) createVirtualTable(stmt *tree.CreateTable) *Table {
 		nil, /* computedExpr */
 		nil, /* onUpdateExpr */
 		cat.NotGeneratedAsIdentity,
-		nil, /* generatedAsIdentitySequenceOption */
+		nil,   /* generatedAsIdentitySequenceOption */
+		false, /* expressionIndexColumn */
 	)
 
 	tab.Columns = []cat.Column{pk}
@@ -511,7 +515,8 @@ func (tc *Catalog) CreateTableAs(name tree.TableName, columns []cat.Column) *Tab
 		nil,                /* computedExpr */
 		nil,                /* onUpdateExpr */
 		cat.NotGeneratedAsIdentity,
-		nil, /* generatedAsIdentitySequenceOption */
+		nil,   /* generatedAsIdentitySequenceOption */
+		false, /* expressionIndexColumn */
 	)
 
 	tab.Columns = append(tab.Columns, rowid)
@@ -834,6 +839,7 @@ func (tt *Table) addColumn(def *tree.ColumnTableDef) {
 			onUpdateExpr,
 			generatedAsIdentityType,
 			generatedAsIdentitySequenceOption,
+			false, /* expressionIndexColumn */
 		)
 	}
 	tt.Columns = append(tt.Columns, col)

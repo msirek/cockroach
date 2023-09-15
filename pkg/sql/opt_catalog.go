@@ -840,6 +840,7 @@ func newOptTable(
 				cd.OnUpdateExpr,
 				mapGeneratedAsIdentityType(col.GetGeneratedAsIdentityType()),
 				cd.GeneratedAsIdentitySequenceOption,
+				col.IsExpressionIndexColumn(),
 			)
 		} else {
 			// We need to propagate the mutation state for computed columns, so that
@@ -888,6 +889,7 @@ func newOptTable(
 				cd.OnUpdateExpr,
 				mapGeneratedAsIdentityType(sysCol.GetGeneratedAsIdentityType()),
 				cd.GeneratedAsIdentitySequenceOption,
+				sysCol.IsExpressionIndexColumn(),
 			)
 		}
 	}
@@ -2119,7 +2121,8 @@ func newOptVirtualTable(
 		nil,        /* computedExpr */
 		nil,        /* onUpdateExpr */
 		cat.NotGeneratedAsIdentity,
-		nil, /* generatedAsIdentitySequenceOption */
+		nil,   /* generatedAsIdentitySequenceOption */
+		false, /* expressionIndexColumn */
 	)
 	for i, d := range desc.PublicColumns() {
 		cd := d.ColumnDesc()
@@ -2136,6 +2139,7 @@ func newOptVirtualTable(
 			cd.OnUpdateExpr,
 			mapGeneratedAsIdentityType(d.GetGeneratedAsIdentityType()),
 			cd.GeneratedAsIdentitySequenceOption,
+			d.IsExpressionIndexColumn(),
 		)
 	}
 

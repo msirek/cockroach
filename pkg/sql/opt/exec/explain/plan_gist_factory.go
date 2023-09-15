@@ -694,7 +694,8 @@ func (u *unknownIndex) Column(i int) cat.IndexColumn {
 		nil, /* computedExpr */
 		nil, /* onUpdateExpr */
 		cat.NotGeneratedAsIdentity,
-		nil, /* generatedAsIdentitySequenceOption */
+		nil,   /* generatedAsIdentitySequenceOption */
+		false, /* expressionIndexColumn */
 	)
 	return cat.IndexColumn{
 		Column:     &col,

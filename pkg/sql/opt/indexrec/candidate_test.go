@@ -200,7 +200,8 @@ func testTablesAndIndexCols() ([]cat.Table, []cat.IndexColumn) {
 		nil, /* computedExpr */
 		nil, /* onUpdateExpr */
 		cat.NotGeneratedAsIdentity,
-		nil /* generatedAsIdentitySequenceOption */)
+		nil, /* generatedAsIdentitySequenceOption */
+		false /* expressionIndexColumn */)
 	col2.Init(1,
 		2,
 		"i",
@@ -212,7 +213,8 @@ func testTablesAndIndexCols() ([]cat.Table, []cat.IndexColumn) {
 		nil, /* computedExpr */
 		nil, /* onUpdateExpr */
 		cat.NotGeneratedAsIdentity,
-		nil /* generatedAsIdentitySequenceOption */)
+		nil, /* generatedAsIdentitySequenceOption */
+		false /* expressionIndexColumn */)
 	col3.Init(2,
 		3,
 		"j",
@@ -224,7 +226,8 @@ func testTablesAndIndexCols() ([]cat.Table, []cat.IndexColumn) {
 		nil, /* computedExpr */
 		nil, /* onUpdateExpr */
 		cat.NotGeneratedAsIdentity,
-		nil /* generatedAsIdentitySequenceOption */)
+		nil, /* generatedAsIdentitySequenceOption */
+		false /* expressionIndexColumn */)
 
 	indexCol1 := cat.IndexColumn{Column: &col1, Descending: false}
 	indexCol2 := cat.IndexColumn{Column: &col2, Descending: false}
