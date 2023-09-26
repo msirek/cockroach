@@ -323,15 +323,46 @@ func (mb *mutationBuilder) buildInputForUpdate(
 		mb.outScope.appendColumnsFromScope(mb.fetchScope)
 		mb.outScope.appendColumnsFromScope(fromScope)
 
+		// Build an UPDATE ... FROM using a lateral join. It is sometimes more
+		// efficient to plan an UPDATE ... FROM statement using lateral join. For
+		// example, the following may produce a lot of rows only for them to be
+		// reduced down to one row per target table row by a `distinct` operation:
+		//   UPDATE t1 SET a = a+1 FROM t2 WHERE t1.a > t2.a;
+		//
+		//   • update
+		//   │ table: t1
+		//   │ set: a
+		//   │ auto commit
+		//   │
+		//   └── • render
+		//       │
+		//       └── • distinct
+		//           │ distinct on: a
+		//           │
+		//           └── • cross join
+		//               │
+		//               ├── • scan
+		//               │     table: t1@t1_pkey
+		//               │     spans: FULL SCAN
+		//               │
+		//               └── • scan
+		//                     table: t2@t2_pkey
+		//                     spans: FULL SCAN
+		//
+		// It would be more efficient to instead use semijoin:
 		left := mb.fetchScope.expr
-		right := fromScope.expr
-		mb.outScope.expr = mb.b.factory.ConstructInnerJoin(left, right, memo.TrueFilter, memo.EmptyJoinPrivate)
+		mb.outScope.expr = fromScope.expr
+		mb.b.buildWhere(where, mb.outScope)
+		//mb.b.buildLimit(&tree.Limit{Count: tree.NewDInt(1)}, inScope, mb.outScope)
+		right := mb.outScope.expr
+		mb.outScope.expr = mb.b.factory.ConstructSemiJoin(left, right, memo.TrueFilter, memo.EmptyJoinPrivate)
+
+		//right = fromScope.expr  // msirek-temp
+		//mb.outScope.expr = mb.b.factory.ConstructInnerJoin(left, right, memo.TrueFilter, memo.EmptyJoinPrivate)
 	} else {
 		mb.outScope = mb.fetchScope
+		mb.b.buildWhere(where, mb.outScope)
 	}
-
-	// WHERE
-	mb.b.buildWhere(where, mb.outScope)
 
 	// SELECT + ORDER BY (which may add projected expressions)
 	projectionsScope := mb.outScope.replace()
