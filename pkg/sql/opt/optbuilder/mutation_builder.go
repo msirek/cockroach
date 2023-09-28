@@ -333,6 +333,20 @@ func (mb *mutationBuilder) buildInputForUpdate(
 	// WHERE
 	mb.b.buildWhere(where, mb.outScope)
 
+	// Build a distinct-on operator on the primary key columns to ensure there
+	// is at most one row in the joined output for every row in the target
+	// table.
+	if fromClausePresent {
+		var pkCols opt.ColSet
+		primaryIndex := mb.tab.Index(cat.PrimaryIndex)
+		for i := 0; i < primaryIndex.KeyColumnCount(); i++ {
+			col := primaryIndex.Column(i)
+			pkCols.Add(mb.fetchColIDs[col.Ordinal()])
+		}
+		mb.outScope = mb.b.buildDistinctOn(
+			pkCols, mb.outScope, false /* nullsAreDistinct */, "" /* errorOnDup */)
+	}
+
 	// SELECT + ORDER BY (which may add projected expressions)
 	projectionsScope := mb.outScope.replace()
 	projectionsScope.appendColumnsFromScope(mb.outScope)
@@ -347,20 +361,6 @@ func (mb *mutationBuilder) buildInputForUpdate(
 	}
 
 	mb.outScope = projectionsScope
-
-	// Build a distinct-on operator on the primary key columns to ensure there
-	// is at most one row in the joined output for every row in the target
-	// table.
-	if fromClausePresent {
-		var pkCols opt.ColSet
-		primaryIndex := mb.tab.Index(cat.PrimaryIndex)
-		for i := 0; i < primaryIndex.KeyColumnCount(); i++ {
-			col := primaryIndex.Column(i)
-			pkCols.Add(mb.fetchColIDs[col.Ordinal()])
-		}
-		mb.outScope = mb.b.buildDistinctOn(
-			pkCols, mb.outScope, false /* nullsAreDistinct */, "" /* errorOnDup */)
-	}
 }
 
 // buildInputForDelete constructs a Select expression from the fields in
