@@ -93,6 +93,14 @@ func (s *Spans) Truncate(newLength int) {
 	s.numSpans = int32(newLength)
 }
 
+// Size returns a lower bound on the total size of the spans in bytes.
+func (sp *Spans) Size() (size int64) {
+	for i := 0; i < sp.Count(); i++ {
+		size += sp.Get(i).Size()
+	}
+	return size
+}
+
 func (s Spans) String() string {
 	var b strings.Builder
 	for i := 0; i < s.Count(); i++ {

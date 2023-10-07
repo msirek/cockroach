@@ -287,6 +287,14 @@ func (k Key) Prev(keyCtx *KeyContext) (_ Key, ok bool) {
 	return Key{firstVal: k.firstVal, otherVals: vals}, true
 }
 
+// Size returns a lower bound on the total size of the key in bytes.
+func (k Key) Size() (size int64) {
+	for i := 0; i < k.Length(); i++ {
+		size += int64(k.Value(i).Size())
+	}
+	return size
+}
+
 // String formats a key like this:
 //
 //	EmptyKey         : empty string

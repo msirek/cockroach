@@ -11,8 +11,10 @@
 package constraint
 
 import (
+	"fmt"
 	"strings"
 
+	"github.com/cockroachdb/cockroach/pkg/sql/execinfra"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt"
 	"github.com/cockroachdb/cockroach/pkg/sql/opt/partition"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/eval"
@@ -373,6 +375,23 @@ func (c *Constraint) Combine(evalCtx *eval.Context, other *Constraint, checkCanc
 		numIterations++
 		if checkCancellation != nil && (numIterations%CancelCheckInterval) == 0 {
 			checkCancellation()
+		}
+	}
+	var memLimit int64
+	if evalCtx.SessionData().WorkMemLimit <= 0 {
+		memLimit = execinfra.DefaultMemoryLimit
+	} else {
+		memLimit = evalCtx.SessionData().WorkMemLimit
+	}
+
+	if c.Spans.Count() > 999 && other.Spans.Count() > 999 { // msirek-temp
+		fmt.Println("hello")
+		spansSize := c.Spans.Size()
+		otherSpansSize := other.Spans.Size()
+		combinedSpansSize := spansSize + otherSpansSize
+		totalSize := int64(c.Spans.Count()) * int64(other.Spans.Count()) * combinedSpansSize
+		if totalSize > memLimit {
+			return
 		}
 	}
 	for i := 0; i < c.Spans.Count(); i++ {

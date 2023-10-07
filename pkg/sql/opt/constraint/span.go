@@ -106,6 +106,13 @@ func (sp *Span) Prefix(evalCtx *eval.Context) int {
 	}
 }
 
+// Size returns a lower bound on the total size of the span in bytes.
+func (sp *Span) Size() (size int64) {
+	size += sp.start.Size()
+	size += sp.end.Size()
+	return size
+}
+
 // StartKey returns the start key.
 func (sp *Span) StartKey() Key {
 	return sp.start
