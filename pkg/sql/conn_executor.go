@@ -1367,9 +1367,12 @@ type connExecutor struct {
 	// Finity "the machine" Automaton is the state machine controlling the state
 	// below.
 	machine fsm.Machine
+	savedMachine fsm.Machine
 	// state encapsulates fields related to the ongoing SQL txn. It is mutated as
 	// the machine's ExtendedState.
 	state          txnState
+	savedState     txnState
+	stateSaved     bool
 	transitionCtx  transitionCtx
 	sessionTracing SessionTracing
 
@@ -3495,6 +3498,18 @@ func (ex *connExecutor) txnPriorityWithSessionDefault(mode tree.UserPriority) ro
 		mode = tree.UserPriority(ex.sessionData().DefaultTxnPriority)
 	}
 	return txnPriorityToProto(mode)
+}
+
+// pushNewSessionState
+func (ex *connExecutor) pushNewSessionState() {
+	ex.savedState = ex.state
+	ex.state = txnState{
+		mon:                          ex.state.mon,
+		connCtx:                      ex.state.connCtx,
+		testingForceRealTracingSpans: ex.state.testingForceRealTracingSpans,
+	}
+	ex.savedMachine = ex.machine
+	ex.machine = fsm.MakeMachine(TxnStateTransitions, stateNoTxn{}, &ex.state)
 }
 
 // QualityOfService returns the QoSLevel session setting if the session
